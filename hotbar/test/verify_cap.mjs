@@ -1,0 +1,15 @@
+import { JSDOM } from "jsdom"; import fs from "fs";
+const src = fs.readFileSync(new URL("../hotbar.js", import.meta.url), "utf8");
+const dom=new JSDOM("<!doctype html><html><body></body></html>",{url:"https://claude.ai/",runScripts:"outside-only"});
+const w=dom.window; const NOW=Date.now();
+w.Notification=function(){};w.Notification.permission="granted";w.Notification.requestPermission=()=>{};
+w.setInterval=()=>1;w.clearInterval=()=>{};
+w.localStorage.setItem("epitaxy-unread-v1",JSON.stringify({state:{unreadIds:[]},version:0}));
+const s=[]; for(let i=0;i<5;i++) s.push({sessionId:"r"+i,title:"Run "+i,isRunning:true,isArchived:false,lastActivityAt:NOW-i*1000});
+w["claude.web"]={LocalSessions:{getAll(){return w.Promise.resolve(s);},onOnEvent(){return()=>{};},setFocusedSession(){},getTranscript(){return w.Promise.resolve([]);}}};
+w.eval(src);
+await new w.Promise(r=>setTimeout(r,40));
+const bar=w.document.getElementById("claude-hotbar");
+const items=bar.querySelectorAll(".hb-item").length;
+console.log("5 active -> bar items:", items);
+process.exit(items===3?0:1);

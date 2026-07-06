@@ -1,0 +1,13 @@
+{
+  "name": "claude-hotbar-tests",
+  "private": true,
+  "version": "1.0.0",
+  "description": "jsdom verification suite for ../hotbar.js",
+  "type": "module",
+  "scripts": {
+    "test": "for f in verify*.mjs icons.mjs; do node \"$f\" || exit 1; done"
+  },
+  "dependencies": {
+    "jsdom": "^29.1.1"
+  }
+}

@@ -1,0 +1,15 @@
+import { JSDOM } from "jsdom"; import fs from "fs";
+const src = fs.readFileSync(new URL("../hotbar.js", import.meta.url), "utf8");
+const dom = new JSDOM("<!doctype html><html><body></body></html>",{url:"https://claude.ai/",runScripts:"outside-only"});
+const w=dom.window; w.Notification=function(){};w.Notification.permission="granted";w.Notification.requestPermission=()=>{};
+w.setInterval=()=>1;w.clearInterval=()=>{};
+w.localStorage.setItem("hotbar-pins",JSON.stringify(["p1"]));
+w.localStorage.setItem("hotbar-spy",JSON.stringify(true));
+w.localStorage.setItem("epitaxy-unread-v1",JSON.stringify({state:{unreadIds:[]},version:0}));
+w["claude.web"]={LocalSessions:{getAll(){return w.Promise.resolve([{sessionId:"p1",title:"Pinned one",isRunning:true,isArchived:false,lastActivityAt:Date.now()-3000}]);},onOnEvent(){return()=>{};},setFocusedSession(){},getTranscript(){return w.Promise.resolve([]);}},Store:{s:{getState(){return w.Promise.resolve({x:Math.random()});}}}};
+w.eval(src); await new w.Promise(r=>setTimeout(r,40));
+const bar=w.document.getElementById("claude-hotbar");
+w.__claudeHotbar.refresh(); await new w.Promise(r=>setTimeout(r,20));
+const svgs=bar.querySelectorAll("svg").length;
+const emoji=/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}]/u.test(bar.innerHTML);
+console.log("svg icons in bar:", svgs, "| pin svg present:", !!bar.querySelector(".hb-pin svg"), "| spy eye:", !!bar.querySelector(".hb-icon svg"), "| chevron:", !!bar.querySelector(".hb-chev svg"), "| emoji in DOM:", emoji);

@@ -1,0 +1,23 @@
+import { JSDOM } from "jsdom";
+import fs from "fs";
+const src = fs.readFileSync(new URL("../hotbar.js", import.meta.url), "utf8");
+const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "https://claude.ai/epitaxy/current", runScripts: "outside-only" });
+const w = dom.window; const NOW=Date.now();
+w.Notification=function(){}; w.Notification.permission="granted"; w.Notification.requestPermission=()=>{};
+w.setInterval=()=>1; w.clearInterval=()=>{};
+w.localStorage.setItem("epitaxy-unread-v1", JSON.stringify({state:{unreadIds:[]},version:0}));
+let focused=null, nav=null;
+w.__TSR_ROUTER__={ navigate(o){ nav=o; } };
+const sessions=[{sessionId:"local_abc123",title:"Proteins",isRunning:true,isArchived:false,lastActivityAt:NOW-3000}];
+w["claude.web"]={LocalSessions:{ getAll(){return w.Promise.resolve(sessions);}, onOnEvent(){return ()=>{};}, setFocusedSession(id){focused=id;}, getTranscript(){return w.Promise.resolve([]);} }};
+let err=null; try{w.eval(src);}catch(e){err=e;}
+await new w.Promise(r=>setTimeout(r,40));
+const bar=w.document.getElementById("claude-hotbar");
+const fail=[]; const ok=(c,m)=>{if(!c)fail.push(m);};
+ok(!err,"no exception: "+(err&&err.message));
+bar.querySelector(".hb-item").dispatchEvent(new w.Event("click"));
+console.log("router.navigate arg:", JSON.stringify(nav), "| setFocusedSession:", focused);
+ok(focused==="local_abc123","setFocusedSession called with id");
+ok(nav && nav.to==="/epitaxy/local_abc123","router navigated to /epitaxy/<id>");
+console.log("\n"+(fail.length?"FAIL:\n - "+fail.join("\n - "):"CLICK-TO-OPEN VERIFIED"));
+process.exit(fail.length?1:0);
