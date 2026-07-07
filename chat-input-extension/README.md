@@ -78,15 +78,52 @@ This fully unregisters the decoration plugin from every composer instance and
 restores plain, undecorated typing — even if only some composer instances
 installed successfully in the first place.
 
-There is no auto-load/persistence step for this script — **simply reloading
-the page also fully removes it**, since nothing is patched into the app
-itself. Pasting it again is always safe: the script guards against a double
-install by tearing down any prior install first.
+If you haven't run `install-persist.sh` (below), **simply reloading the page
+also fully removes it**, since nothing is patched into the app. Pasting it
+again is always safe: the script guards against a double install by tearing
+down any prior install first.
+
+## Auto-load on every launch (optional, advanced)
+
+`install-persist.sh` patches the preload so the script loads automatically,
+same approach as `hotbar/`'s installer — independent of it, own backup file,
+won't touch or conflict with a hotbar install.
+
+```bash
+cd chat-input-extension
+./install-persist.sh     # quit Claude first
+```
+
+**Understand the tradeoffs first:**
+
+- It modifies `app.asar`, which **breaks Anthropic's code signature**. The
+  script re-signs the app ad-hoc so it still launches, but this is
+  **unsupported by Anthropic** and could interfere with app integrity checks.
+- A **Claude app update wipes the patch** (it replaces `app.asar`). Re-run the
+  script after each update.
+- It's tied to the current app version's internals (the `.tiptap.ProseMirror`
+  selector, `mainView.js`'s layout). If a future version changes these, the
+  script may need updating.
+- Auto-loading raises the stakes of a bug slightly, since you no longer get a
+  reload-to-remove safety net for free — you'd need
+  `window.__chatInputExtension.destroy()` or `./uninstall.sh`. The script's
+  own defensive guards (never-throw decoration passes, graceful skip on
+  sourcing failure) still apply either way.
+
+Reverse it any time:
+
+```bash
+./uninstall.sh
+```
+
+A one-time backup (`app.asar.chat-input-extension-backup`) is created on
+first install so the pre-patch state can always be restored.
 
 ## Files
 
-- `chat-input-extension.js` — the script itself (paste-in only; not
-  auto-loaded)
+- `chat-input-extension.js` — the script itself (paste-in or auto-loaded)
+- `install-persist.sh` — patch preload to auto-load; backs up + re-signs
+- `uninstall.sh` — restore app.asar to its pre-patch state
 - `test/` — jsdom unit test suite (no browser/dev-server dependency); run
   `npm install && npm test` inside `test/`
 
