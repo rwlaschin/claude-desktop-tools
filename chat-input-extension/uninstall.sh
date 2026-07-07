@@ -53,9 +53,27 @@ cp "$BACKUP" "$ASAR"
 rm -f "$BACKUP"
 
 if [ "$OS" = "Darwin" ]; then
-  echo "==> Re-signing ad-hoc"
   APP="$(dirname "$(dirname "$(dirname "$ASAR")")")"
-  codesign --force --deep --sign - "$APP" || true
+
+  # Restore the Info.plist captured with this backup asar (install rewrote its
+  # ElectronAsarIntegrity hash). The backup asar + backup Info.plist are a
+  # matched pair, so the restored hash matches the restored asar; restoring only
+  # app.asar would leave a mismatched hash and crash the app (SIGTRAP).
+  INFO_BACKUP="$(dirname "$(dirname "$ASAR")")/Info.plist.chat-input-extension-backup"
+  if [ -f "$INFO_BACKUP" ]; then
+    echo "==> Restoring Info.plist"
+    cp "$INFO_BACKUP" "$APP/Contents/Info.plist"
+    rm -f "$INFO_BACKUP"
+  fi
+
+  # Re-sign ad-hoc, innermost-first (NOT --deep; NO hardened runtime).
+  echo "==> Re-signing ad-hoc"
+  sign_one() { codesign --force --sign - "$1" >/dev/null 2>&1; }
+  while IFS= read -r -d '' dylib; do sign_one "$dylib"; done \
+    < <(find "$APP/Contents/Frameworks" -name "*.dylib" -type f -print0 2>/dev/null)
+  for fw in "$APP"/Contents/Frameworks/*.framework; do [ -d "$fw" ] && sign_one "$fw"; done
+  for helper in "$APP"/Contents/Frameworks/*.app; do [ -d "$helper" ] && sign_one "$helper"; done
+  sign_one "$APP" || true
 fi
 
 echo "==> Done. The chat-input-extension auto-load patch is removed."

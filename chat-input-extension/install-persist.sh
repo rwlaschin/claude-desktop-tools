@@ -98,6 +98,15 @@ fi
 echo "==> Backing up app.asar"
 [ -f "$BACKUP" ] || cp "$ASAR" "$BACKUP"
 
+# macOS: also back up Info.plist. We rewrite its ElectronAsarIntegrity hash
+# below; uninstall.sh restores this so the original asar+hash pair matches again
+# (restoring only app.asar would leave the modified hash and crash the app).
+if [ "$OS" = "Darwin" ]; then
+  INFO_BACKUP="$(dirname "$(dirname "$ASAR")")/Info.plist.chat-input-extension-backup"
+  APP_INFO="$(dirname "$(dirname "$(dirname "$ASAR")")")/Contents/Info.plist"
+  [ -f "$INFO_BACKUP" ] || cp "$APP_INFO" "$INFO_BACKUP"
+fi
+
 echo "==> Extracting"
 npx --yes @electron/asar extract "$ASAR" "$WORK"
 
@@ -127,7 +136,9 @@ fi
 PAYLOAD_B64="$(base64 < "$SCRIPT_JS" | tr -d '\n')"
 {
   printf '\n/* __CLAUDE_CHAT_INPUT_EXTENSION_LOADER__ */\n'
-  printf ';(function(){try{var src=atob("%s");' "$PAYLOAD_B64"
+  # Decode as UTF-8, not latin-1: atob() yields a byte string, so multi-byte
+  # UTF-8 chars in the payload would corrupt (e.g. "·" -> "Â·").
+  printf ';(function(){try{var src=new TextDecoder().decode(Uint8Array.from(atob("%s"),function(c){return c.charCodeAt(0);}));' "$PAYLOAD_B64"
   printf 'var wf=null;try{wf=require("electron").webFrame;}catch(e){}'
   printf 'var inline=function(){try{var el=document.createElement("script");el.textContent=src;(document.head||document.documentElement).appendChild(el);el.remove();}catch(e){}};'
   printf 'if(!wf){if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",function(){setTimeout(inline,1500);});else setTimeout(inline,1500);return;}'
@@ -138,17 +149,66 @@ PAYLOAD_B64="$(base64 < "$SCRIPT_JS" | tr -d '\n')"
 } >> "$PRELOAD"
 
 echo "==> Repacking"
-UNPACK_DIR="$(dirname "$ASAR")/app.asar.unpacked"
-npx --yes @electron/asar pack "$WORK" "$ASAR" \
-  --unpack-dir "$UNPACK_DIR" 2>/dev/null || \
-  npx --yes @electron/asar pack "$WORK" "$ASAR"
+# Native code MUST stay on disk in app.asar.unpacked — it can't be dlopen'd from
+# inside an asar. --unpack takes a GLOB (relative to source, matched by
+# basename), NOT a destination path; the old --unpack-dir <path> matched nothing
+# and silently packed the binaries inline. Claude's unpacked set is *.node +
+# *.dylib + node-pty's extensionless spawn-helper; this glob reproduces it.
+npx --yes @electron/asar pack "$WORK" "$ASAR" --unpack "{*.node,*.dylib,spawn-helper}"
 
 if [ "$OS" = "Darwin" ]; then
-  echo "==> Re-signing ad-hoc"
   APP="$(dirname "$(dirname "$(dirname "$ASAR")")")"
-  codesign --force --deep --sign - "$APP" || {
-    echo "codesign failed; restoring backup"; cp "$BACKUP" "$ASAR"; exit 1;
-  }
+  INFO_PLIST="$APP/Contents/Info.plist"
+
+  # STEP A — Update the Electron ASAR integrity hash. Info.plist embeds a
+  # SHA-256 of app.asar's header; Electron FATAL-aborts (SIGTRAP) at startup on
+  # mismatch. Any edit to app.asar changes the header, so this MUST be updated
+  # or the app crash-loops on launch. Hasher matches @electron/asar
+  # getRawHeader()+sha256, parsing the pickle header directly (no extra deps).
+  echo "==> Updating ElectronAsarIntegrity hash in Info.plist"
+  NEWHASH="$(node -e '
+    const fs=require("fs"),c=require("crypto");
+    const fd=fs.openSync(process.argv[1],"r");
+    const b1=Buffer.alloc(8); fs.readSync(fd,b1,0,8,0);
+    const size=b1.readUInt32LE(4);
+    const b2=Buffer.alloc(size); fs.readSync(fd,b2,0,size,8);
+    const n=b2.readUInt32LE(4);
+    const s=b2.toString("utf8",8,8+n);
+    fs.closeSync(fd);
+    process.stdout.write(c.createHash("sha256").update(s).digest("hex"));
+  ' "$ASAR")"
+  if [ -z "$NEWHASH" ]; then
+    echo "failed to compute asar hash; restoring backup"; cp "$BACKUP" "$ASAR"; exit 1
+  fi
+  /usr/libexec/PlistBuddy -c \
+    "Set :ElectronAsarIntegrity:Resources/app.asar:hash $NEWHASH" "$INFO_PLIST" || {
+      echo "failed to set integrity hash; restoring backup"; cp "$BACKUP" "$ASAR"; exit 1
+    }
+
+  # STEP B — Re-sign ad-hoc, innermost-first (NOT --deep, which breaks framework
+  # seals; NO hardened runtime, which AMFI rejects for an ad-hoc signature).
+  echo "==> Re-signing ad-hoc (inner->outer, no hardened runtime)"
+  sign_one() { codesign --force --sign - "$1"; }
+  RESIGN_OK=1
+  while IFS= read -r -d '' dylib; do
+    sign_one "$dylib" || { RESIGN_OK=0; break; }
+  done < <(find "$APP/Contents/Frameworks" -name "*.dylib" -type f -print0 2>/dev/null)
+  if [ "$RESIGN_OK" = 1 ]; then
+    for fw in "$APP"/Contents/Frameworks/*.framework; do
+      [ -d "$fw" ] && { sign_one "$fw" || { RESIGN_OK=0; break; }; }
+    done
+  fi
+  if [ "$RESIGN_OK" = 1 ]; then
+    for helper in "$APP"/Contents/Frameworks/*.app; do
+      [ -d "$helper" ] && { sign_one "$helper" || { RESIGN_OK=0; break; }; }
+    done
+  fi
+  [ "$RESIGN_OK" = 1 ] && { sign_one "$APP" || RESIGN_OK=0; }
+  if [ "$RESIGN_OK" != 1 ]; then
+    echo "codesign failed; restoring backup"; cp "$BACKUP" "$ASAR"; exit 1
+  fi
+  echo "==> Verifying signature"
+  codesign --verify --deep --strict "$APP" 2>&1 || echo "   (warning: strict verify reported issues)"
 else
   echo "==> Skipping code-signing step (not applicable on $OS)"
 fi

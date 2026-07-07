@@ -65,6 +65,7 @@
   var lastAging = {};          // id -> 1, sessions that have crossed FRESH_MS into aging
   var expanded = false;
   var query = "";
+  var renderGen = 0;           // bumps each render(); async row batches abort if stale
   var timer = null, unsub = null, hoverEl = null, hoverTimer = null;
   var pos = loadJSON("hotbar-pos", null);   // {left, top} once dragged
   var panelScroll = 0;                       // preserved panel scroll across re-renders
@@ -410,6 +411,17 @@
   }
   function jump(id) {
     dismissed[id] = Date.now(); saveJSON("hotbar-dismissed", dismissed);
+    // Chats open at /chat/<uuid> (no local bridge; navigate the app's router).
+    if (kindById[id] === "chat") {
+      var uuid = String(id).replace(/^chat:/, "");
+      var cpath = "/chat/" + uuid;
+      try {
+        var cr = window.__TSR_ROUTER__;
+        if (cr && typeof cr.navigate === "function") { cr.navigate({ to: cpath }); return; }
+      } catch (e) {}
+      try { if (location.pathname !== cpath) location.assign(cpath); } catch (e) {}
+      return;
+    }
     var cowork = kindById[id] === "cowork";
     var bridge = cowork ? coworkApi : api;
     if (cowork) {
@@ -445,7 +457,7 @@
   style.textContent = [
     "#claude-hotbar{position:fixed;top:28px;right:12px;z-index:2147483647;",
     "  font:12px/1.25 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#e8e6df;",
-    "  background:rgba(28,28,30,.96);border:1px solid rgba(255,255,255,.10);border-radius:12px;",
+    "  background:rgba(28,28,30,.96);border:1px solid rgba(255,255,255,.35);border-radius:12px;",
     "  box-shadow:0 8px 24px rgba(0,0,0,.35);display:flex;align-items:stretch;max-width:70vw;",
     "  overflow:visible;-webkit-app-region:no-drag;}",
     "#claude-hotbar .hb-item{position:relative;display:flex;align-items:center;gap:8px;padding:8px 12px;",
@@ -584,7 +596,7 @@
   }
 
   // kind = code (LocalSessions) | cowork (agent-mode w/ space) | chat (agent-mode)
-  var KIND_CP = { chat: "", cowork: "", code: "" };  // Anthropicons codepoints
+  var KIND_CP = { chat: "", cowork: "", code: "" };  // Anthropicons codepoints
   function kindOf(s) { return s._kind === "code" ? "code" : (s.spaceId ? "cowork" : "chat"); }
   function kindLabel(s) { return kindOf(s); }
   function kindGlyph(s) {
@@ -673,17 +685,8 @@
     return el;
   }
 
-  function group(title, color, list) {
-    if (!list.length) return;
-    var box = root.querySelector(".hb-scroll");
-    var h = document.createElement("div");
-    h.className = "hb-grp"; h.style.color = color;
-    h.textContent = title;
-    box.appendChild(h);
-    list.forEach(function (s) { box.appendChild(panelRow(s)); });
-  }
-
   function render(sessions, unread) {
+    var gen = ++renderGen;   // any newer render() aborts this one's async row fill
     var byOldest = function (a, b) { return (durationFor(b, state(b, unread))) - (durationFor(a, state(a, unread))); };
     // priority: error > question > blocked > fresh > aging > running > pinned-idle
     var errored = sessions.filter(function (s) { return hasError(s); });
@@ -794,15 +797,46 @@
         .sort(function (a, b) { return (tnum(b.lastActivityAt) || 0) - (tnum(a.lastActivityAt) || 0); });
       var recentShown = recent.slice(0, RECENT_CAP);
 
-      group("Needs attention · " + errored.filter(match).length, "#A32D2D", errored.filter(match));
-      group("Question · " + question.filter(match).length, "#e24b4a", question.filter(match));
-      group("Needs you · " + blocked.filter(match).length, "#e0a24b", blocked.filter(match));
-      group("Done · " + fresh.filter(match).length, "#378ADD", fresh.filter(match));
-      group("Aging · " + aging.filter(match).length, "#e0673b", aging.filter(match));
-      group("Running · " + running.filter(match).length, "#5dcaa5", running.filter(match));
-      group("Pinned · " + pinnedAll.length, "#6b9bd1", pinnedAll);
-      group("Recent · showing " + recentShown.length + " of " + recent.length, "#8f8d88", recentShown);
-      scroll.scrollTop = panelScroll;   // restore scroll position after rebuild
+      // Flatten every group into one ordered op list (header or row), then fill
+      // the scroll region in chunks yielding to the event loop between batches —
+      // a 500-row rebuild never blocks the UI. Each batch bails if a newer
+      // render() has started (renderGen changed), so re-renders don't pile up.
+      var groups = [
+        { title: "Needs attention · " + errored.filter(match).length, color: "#A32D2D", list: errored.filter(match) },
+        { title: "Question · " + question.filter(match).length,       color: "#e24b4a", list: question.filter(match) },
+        { title: "Needs you · " + blocked.filter(match).length,       color: "#e0a24b", list: blocked.filter(match) },
+        { title: "Done · " + fresh.filter(match).length,              color: "#378ADD", list: fresh.filter(match) },
+        { title: "Aging · " + aging.filter(match).length,             color: "#e0673b", list: aging.filter(match) },
+        { title: "Running · " + running.filter(match).length,         color: "#5dcaa5", list: running.filter(match) },
+        { title: "Pinned · " + pinnedAll.length,                      color: "#6b9bd1", list: pinnedAll },
+        { title: "Recent · showing " + recentShown.length + " of " + recent.length, color: "#8f8d88", list: recentShown }
+      ];
+      var ops = [];
+      groups.forEach(function (g) {
+        if (!g.list.length) return;
+        ops.push({ header: g });
+        g.list.forEach(function (s) { ops.push({ row: s }); });
+      });
+      var BATCH = 60, idx = 0;
+      function pump() {
+        if (gen !== renderGen) return;              // superseded — stop building
+        var frag = document.createDocumentFragment();
+        var end = Math.min(idx + BATCH, ops.length);
+        for (; idx < end; idx++) {
+          var op = ops[idx];
+          if (op.header) {
+            var h = document.createElement("div");
+            h.className = "hb-grp"; h.style.color = op.header.color; h.textContent = op.header.title;
+            frag.appendChild(h);
+          } else {
+            frag.appendChild(panelRow(op.row));
+          }
+        }
+        scroll.appendChild(frag);
+        scroll.scrollTop = panelScroll;             // keep scroll steady as it fills
+        if (idx < ops.length) setTimeout(pump, 0);  // yield, then next batch
+      }
+      pump();   // first batch is synchronous, so the panel shows content immediately
       // NOTE: do not auto-focus the search — it steals keystrokes from the app.
     }
   }
@@ -819,15 +853,56 @@
   // see window.__claudeHotbar.injectFake / .clearFake below.
   var fakeSessions = [];
   var fakeExpireTimer = null;
+
+  // ---- chats source ----------------------------------------------------
+  // Free (and any) accounts have chat conversations even with no Code/cowork
+  // sessions. We do NOT call the server — the app already fetches conversations
+  // for its own Recents sidebar and persists them (via react-query-persist) to
+  // the "react-query-cache-ls" localStorage entry, refreshing it whenever they
+  // change. We just read that local cache each tick: no network, no polling a
+  // REST endpoint, and it updates as fast as the app's own list does.
+  function chatsFromCache() {
+    var list = [];
+    try {
+      var raw = localStorage.getItem("react-query-cache-ls");
+      if (raw) {
+        var qs = (JSON.parse(raw).clientState || {}).queries || [];
+        var best = null, bestLen = -1;
+        qs.forEach(function (q) {
+          if (JSON.stringify(q.queryKey || "").indexOf("chat_conversation_list") < 0) return;
+          var d = q.state && q.state.data;
+          var arr = d && (Array.isArray(d) ? d : d.data);   // {data:[…], has_more}
+          if (Array.isArray(arr) && arr.length > bestLen) { best = arr; bestLen = arr.length; }
+        });
+        if (best) list = best.filter(function (c) { return c && c.uuid && !c.is_temporary; });
+      }
+    } catch (e) {}
+    if (spyOn) {
+      try {
+        spyPush("chats", "react-query-cache-ls", JSON.stringify({
+          n: list.length,
+          items: list.slice(0, 6).map(function (c) { return { name: c.name, updated_at: c.updated_at, uuid: c.uuid }; })
+        }));
+      } catch (e) {}
+    }
+    return list.map(function (c) {
+      return { sessionId: "chat:" + c.uuid, chatUuid: c.uuid, title: c.name || "New chat",
+               _kind: "chat", isRunning: false, isArchived: false,
+               lastActivityAt: c.updated_at || c.created_at, model: c.model };
+    });
+  }
+
   function fetchSessions() {
     var codeP = Promise.resolve(api.getAll()).then(normalize).catch(function () { return []; });
     var cwP = coworkApi ? Promise.resolve(coworkApi.getAll()).then(normalize).catch(function () { return []; })
                         : Promise.resolve([]);
-    return Promise.all([codeP, cwP]).then(function (r) {
+    var chatsP = Promise.resolve(chatsFromCache());   // local read, no network
+    return Promise.all([codeP, cwP, chatsP]).then(function (r) {
       kindById = {};
       var out = [];
       r[0].forEach(function (s) { if (!s.isArchived) { s._kind = "code"; kindById[sid(s)] = "code"; out.push(s); } });
       r[1].forEach(function (s) { if (!s.isArchived) { s._kind = "cowork"; kindById[sid(s)] = "cowork"; out.push(s); } });
+      r[2].forEach(function (s) { if (!s.isArchived) { s._kind = "chat"; kindById[sid(s)] = "chat"; out.push(s); } });
       fakeSessions.forEach(function (s) { var k = s._kind || "code"; kindById[sid(s)] = k; out.push(s); });
       return out;
     });
