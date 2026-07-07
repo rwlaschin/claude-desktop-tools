@@ -391,14 +391,33 @@
 
   // ---- actions ---------------------------------------------------------
   // Code sessions open at /epitaxy/<id> via the TanStack router (no reload).
-  // Cowork chats use their own bridge's focus (their route isn't known), so
-  // we just setFocusedSession on the right bridge.
+  // Cowork chats have no known deep-link route, so setFocusedSession alone
+  // only updates which chat is focused *inside* the cowork view — if the
+  // code tab is currently mounted instead, that call is a silent no-op.
+  // Fix: click the app's own tab switcher into the cowork view first (the
+  // same thing a user does by hand), then focus the session.
+  function switchToCoworkTab() {
+    try {
+      var nodes = document.querySelectorAll('[role="tab"], button, a');
+      for (var i = 0; i < nodes.length; i++) {
+        var el = nodes[i];
+        if (el.closest && el.closest("#claude-hotbar")) continue; // never click our own bar
+        var label = (el.getAttribute("aria-label") || el.textContent || "").trim();
+        if (/^cowork$/i.test(label)) { el.click(); return true; }
+      }
+    } catch (e) {}
+    return false;
+  }
   function jump(id) {
     dismissed[id] = Date.now(); saveJSON("hotbar-dismissed", dismissed);
     var cowork = kindById[id] === "cowork";
     var bridge = cowork ? coworkApi : api;
+    if (cowork) {
+      switchToCoworkTab();
+      try { if (bridge && bridge.setFocusedSession) bridge.setFocusedSession(id); } catch (e) {}
+      return;
+    }
     try { if (bridge && bridge.setFocusedSession) bridge.setFocusedSession(id); } catch (e) {}
-    if (cowork) return;                       // no known deep-link route for cowork
     var path = "/epitaxy/" + id;
     try {
       var r = window.__TSR_ROUTER__;

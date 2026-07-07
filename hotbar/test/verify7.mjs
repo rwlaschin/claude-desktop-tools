@@ -44,11 +44,20 @@ const badge=bar.querySelector(".hb-count");
 console.log("badge:", badge&&badge.textContent, badge&&badge.style.background);
 ok(badge && badge.textContent==="3","attention count merges code+cowork (3)");
 
-// jump on a cowork item uses cowork bridge, NOT router nav
+// jump on a cowork item clicks the app's own "Cowork" tab switcher (so the
+// view actually mounts even if the code tab is currently active) and then
+// focuses the session via the cowork bridge — it does NOT router-navigate
+// to /epitaxy (that's the code-session route).
+const coworkTab=w.document.createElement("button");
+coworkTab.textContent="Cowork";
+let coworkTabClicked=false;
+coworkTab.addEventListener("click",()=>{coworkTabClicked=true;});
+w.document.body.appendChild(coworkTab);
 w.__nav=null;
 const foodItem=[...bar.querySelectorAll(".hb-item")].find(e=>/Late night food ideas/.test(e.textContent));
 foodItem.dispatchEvent(new w.MouseEvent("click",{bubbles:true}));
-console.log("cowork focus:",coworkFocused,"| router nav:",w.__nav);
+console.log("cowork tab clicked:",coworkTabClicked,"| cowork focus:",coworkFocused,"| router nav:",w.__nav);
+ok(coworkTabClicked,"cowork jump clicks the app's Cowork tab switcher");
 ok(coworkFocused==="cw1","cowork jump calls LocalAgentModeSessions.setFocusedSession");
 ok(w.__nav===null,"cowork jump does NOT router-navigate to /epitaxy");
 
