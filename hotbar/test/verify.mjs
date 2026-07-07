@@ -47,10 +47,11 @@ ok(subs.every(s=>durRe.test(s)), "every bar item shows a duration");
 const runSub=subs.find(s=>/running/.test(s));
 ok(runSub && /10m/.test(runSub), "run time uses transition stamp (~10m), got: "+runSub);
 
-// 3. waiting item present, has waiting class + wait duration
-const waitItem=items.find(i=>i.className.includes("waiting"));
-ok(!!waitItem, "waiting item styled");
-ok(waitItem && durRe.test(waitItem.querySelector(".hb-sub").textContent), "waiting item shows wait duration");
+// 3. waiting item present (aged into "aging" since lastActivityAt is 15m
+// old, past FRESH_MS), has aging class + wait duration
+const waitItem=items.find(i=>i.className.includes("aging"));
+ok(!!waitItem, "aging item styled");
+ok(waitItem && durRe.test(waitItem.querySelector(".hb-sub").textContent), "aging item shows wait duration");
 
 // 4. toggle count = waiting(1)+running(1) = 2
 const count=bar.querySelector(".hb-count");
@@ -76,7 +77,7 @@ bar.querySelector(".hb-toggle").dispatchEvent(new w.Event("click"));
 await new w.Promise(r=>setTimeout(r,20));
 const grps=[...bar.querySelectorAll(".hb-grp")].map(g=>g.textContent);
 console.log("GROUPS:", grps);
-ok(grps.some(g=>/Waiting on you/.test(g)) && grps.some(g=>/Running/.test(g)) && grps.some(g=>/Recent/.test(g)), "panel grouped");
+ok(grps.some(g=>/Aging/.test(g)) && grps.some(g=>/Running/.test(g)) && grps.some(g=>/Recent/.test(g)), "panel grouped");
 ok(!!bar.querySelector(".hb-search input"), "search box present");
 const pinRow=[...bar.querySelectorAll(".hb-row .hb-act")][0];
 pinRow.dispatchEvent(new w.Event("click"));

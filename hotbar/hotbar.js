@@ -51,12 +51,18 @@
   var timing = loadJSON("hotbar-timing", { running: {}, waiting: {} });
   if (!timing.running) timing.running = {};
   if (!timing.waiting) timing.waiting = {};
+  // dismissed[id] = ms timestamp jump(id) was called while the session was
+  // unread — suppresses its fresh/aging/question badge until unread clears
+  // and re-fires (see updateTiming). {sessionId: dismissedAtMs}
+  var dismissed = loadJSON("hotbar-dismissed", {});
 
   // ---- volatile state --------------------------------------------------
   var lastStatus = {};         // id -> "running"|"idle", for change detection
   var lastUnread = {};         // id -> 1
   var lastBlocked = {};        // id -> 1, sessions awaiting your permission answer
   var lastErrored = {};        // id -> 1, sessions with a hard error (credits/network/etc)
+  var lastQuestion = {};       // id -> 1, sessions whose last message reads as a question
+  var lastAging = {};          // id -> 1, sessions that have crossed FRESH_MS into aging
   var expanded = false;
   var query = "";
   var timer = null, unsub = null, hoverEl = null, hoverTimer = null;
@@ -105,11 +111,38 @@
   var CREDIT_ERROR = { api_billing_error: 1, api_rate_limit: 1, extra_usage_required: 1 };
   function isCreditError(s) { return !!CREDIT_ERROR[s.errorCategory]; }
   function isNetworkError(s) { return s.errorCategory === "network_error"; }
+  // heuristic: does the last known message read like it's asking the user
+  // something? Ends-with-"?" is the primary signal; a small set of common
+  // phrase-openers (checked against just the first 60 chars) catches
+  // questions that don't end in "?" (e.g. "Should I proceed with..."). Reads
+  // from the existing transcriptCache — never triggers a second fetch.
+  var QUESTION_OPENER_RE = /^(could you|would you like|should i|which one|do you want|can you|what would you)\b/i;
+  function looksLikeQuestion(text) {
+    if (!text) return false;
+    var t = String(text).trim();
+    if (!t) return false;
+    if (/\?\s*$/.test(t)) return true;
+    return QUESTION_OPENER_RE.test(t.slice(0, 60));
+  }
+  // FRESH_MS: a session stays "fresh" (blue) for this long after entering
+  // unread. AGING_MS is the fresh/aging boundary itself — there is no third
+  // threshold, the name just documents which constant plays which role.
+  var FRESH_MS = 600000;    // 10 minutes
+  var AGING_MS = 900000;    // 15 minutes — reserved boundary constant, see below
+  function waitAgeState(id, unread) {
+    if (!unread[id]) return null;
+    var age = Date.now() - (timing.waiting[id] || Date.now());
+    return age < FRESH_MS ? "fresh" : "aging";
+  }
   function state(s, unread) {
     var id = sid(s);
     if (hasError(s)) return "error";       // most urgent: session is broken, needs action
+    if (unread[id] && !dismissed[id] && looksLikeQuestion(transcriptCache[id])) return "question";
     if (needsInput(s)) return "blocked";   // waiting on YOUR answer
-    if (unread[id]) return "waiting";
+    if (unread[id] && !dismissed[id]) {
+      var ageSt = waitAgeState(id, unread);
+      if (ageSt) return ageSt;             // "fresh" or "aging"
+    }
     if (isRunning(s)) return "running";
     return "idle";
   }
@@ -117,7 +150,7 @@
   function durationFor(s, st) {
     var id = sid(s), now = Date.now();
     if (st === "running") return now - (timing.running[id] || tnum(s.lastActivityAt) || now);
-    if (st === "waiting") return now - (timing.waiting[id] || tnum(s.lastActivityAt) || now);
+    if (st === "fresh" || st === "aging" || st === "question") return now - (timing.waiting[id] || tnum(s.lastActivityAt) || now);
     // "error", "blocked" and "idle" all measure from the last activity (when it stopped)
     return tnum(s.lastActivityAt) != null ? now - tnum(s.lastActivityAt) : null;
   }
@@ -257,6 +290,13 @@
     Object.keys(timing.running).forEach(function (id) { if (!runNow[id]) { delete timing.running[id]; dirty = true; } });
     Object.keys(timing.waiting).forEach(function (id) { if (!waitNow[id]) { delete timing.waiting[id]; dirty = true; } });
     if (dirty) saveJSON("hotbar-timing", timing);
+    // a dismissed session stops being suppressed once it's no longer unread —
+    // dismissal is a one-shot ack of the CURRENT ping, not a permanent mute
+    var dismissDirty = false;
+    Object.keys(dismissed).forEach(function (id) {
+      if (!unread[id]) { delete dismissed[id]; dismissDirty = true; }
+    });
+    if (dismissDirty) saveJSON("hotbar-dismissed", dismissed);
   }
 
   function detectChanges(sessions, unread) {
@@ -288,6 +328,36 @@
       if (!lastErrored[id]) notify(isCreditError(s) ? "Out of credits" : errorLabel(s), titleOf(s));
     });
     lastErrored = erroredNow;
+    // question = last message reads like it's asking the user something —
+    // notify on entry, same pattern as blocked/errored
+    var questionNow = {};
+    sessions.forEach(function (s) {
+      var id = sid(s);
+      if (!unread[id] || dismissed[id] || hasError(s) || needsInput(s)) return;
+      if (!looksLikeQuestion(transcriptCache[id])) return;
+      questionNow[id] = 1;
+      if (!lastQuestion[id]) notify("Question for you", titleOf(s));
+    });
+    lastQuestion = questionNow;
+    // aging = a fresh/waiting session has crossed FRESH_MS without being
+    // dismissed — notify once on the fresh->aging transition
+    var agingNow = {};
+    sessions.forEach(function (s) {
+      var id = sid(s);
+      if (!unread[id] || dismissed[id] || hasError(s) || needsInput(s) || questionNow[id]) return;
+      if (waitAgeState(id, unread) !== "aging") return;
+      agingNow[id] = 1;
+      if (!lastAging[id]) notify("Still waiting on you", titleOf(s));
+    });
+    lastAging = agingNow;
+    // proactive preview fetch: the moment a session first resolves to fresh,
+    // populate transcriptCache[id] unconditionally (not gated on hover) so
+    // the question heuristic has data to work with on a later tick
+    sessions.forEach(function (s) {
+      var id = sid(s);
+      if (!unread[id] || dismissed[id] || hasError(s) || needsInput(s)) return;
+      if (waitAgeState(id, unread) === "fresh" && !transcriptCache[id]) fetchPreview(s, function () {});
+    });
     Object.keys(lastStatus).forEach(function (id) { if (!seen[id]) delete lastStatus[id]; });
   }
 
@@ -324,6 +394,7 @@
   // Cowork chats use their own bridge's focus (their route isn't known), so
   // we just setFocusedSession on the right bridge.
   function jump(id) {
+    dismissed[id] = Date.now(); saveJSON("hotbar-dismissed", dismissed);
     var cowork = kindById[id] === "cowork";
     var bridge = cowork ? coworkApi : api;
     try { if (bridge && bridge.setFocusedSession) bridge.setFocusedSession(id); } catch (e) {}
@@ -367,20 +438,28 @@
     "#claude-hotbar .hb-grip:hover{opacity:.85;background:rgba(255,255,255,.06);}",
     "#claude-hotbar .hb-grip:active{cursor:grabbing;}",
     "#claude-hotbar .hb-item:hover{background:rgba(255,255,255,.06);}",
-    "#claude-hotbar .hb-item.waiting{background:rgba(216,90,48,.16);border-left:3px solid #e0673b;}",
+    "#claude-hotbar .hb-item.fresh{background:rgba(55,138,221,.16);border-left:3px solid #378ADD;}",
+    "#claude-hotbar .hb-item.fresh .hb-sub{color:#9dc3ee;}",
+    "#claude-hotbar .hb-item.aging{background:rgba(216,90,48,.16);border-left:3px solid #e0673b;}",
+    "#claude-hotbar .hb-item.aging .hb-sub{color:#c9a08c;}",
+    "#claude-hotbar .hb-item.question{background:rgba(226,75,74,.16);border-left:3px solid #e24b4a;}",
+    "#claude-hotbar .hb-item.question .hb-sub{color:#f0a3a2;}",
     "#claude-hotbar .hb-item.blocked{background:rgba(224,162,75,.18);border-left:3px solid #e0a24b;}",
     "#claude-hotbar .hb-item.blocked .hb-sub{color:#d8b483;}",
     "#claude-hotbar .hb-tt{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
     "#claude-hotbar .hb-sub{color:#9a9891;font-size:11px;}",
-    "#claude-hotbar .hb-item.waiting .hb-sub{color:#c9a08c;}",
     // shape+color status markers
     "#claude-hotbar .m{width:9px;height:9px;flex:none;display:inline-block;}",
     "#claude-hotbar .m.running{border-radius:50%;background:#5dcaa5;box-shadow:0 0 6px #5dcaa5;}",
-    "#claude-hotbar .m.waiting{background:#e0673b;transform:rotate(45deg);}",
+    "#claude-hotbar .m.fresh{border-radius:50%;background:#378ADD;box-shadow:0 0 6px #378ADD;}",
+    "#claude-hotbar .m.aging{background:#e0673b;transform:rotate(45deg);}",
     "#claude-hotbar .m.idle{border-radius:50%;border:1.5px solid #8f8d88;box-sizing:border-box;}",
     "#claude-hotbar .m.blocked{border-radius:2px;background:#e0a24b;box-shadow:0 0 6px #e0a24b;}",
-    "#claude-hotbar .m-alert{display:flex;flex:none;color:#e24b4a;}",
-    "#claude-hotbar .hb-item.error{background:rgba(226,75,74,.16);border-left:3px solid #e24b4a;}",
+    "#claude-hotbar .m.question{display:flex;flex:none;color:#e24b4a;width:auto;height:auto;}",
+    // error's marker keeps the dark saturated red (#A32D2D) exclusively —
+    // never reassigned, so it stays visually distinct from .question's #e24b4a
+    "#claude-hotbar .m-alert{display:flex;flex:none;color:#A32D2D;}",
+    "#claude-hotbar .hb-item.error{background:rgba(163,45,45,.16);border-left:3px solid #A32D2D;}",
     "#claude-hotbar .hb-item.error .hb-sub{color:#f0a3a2;}",
     "#claude-hotbar .hb-row.error{background:rgba(226,75,74,.10);}",
     "#claude-hotbar .hb-row.error .hb-sub{color:#f0a3a2;}",
@@ -413,9 +492,11 @@
     ".claudehotbar-pop .meta{margin-top:7px;font-size:10px;color:#78766f;}",
     ".claudehotbar-pop .m{width:9px;height:9px;flex:none;display:inline-block;}",
     ".claudehotbar-pop .m.running{border-radius:50%;background:#5dcaa5;}",
-    ".claudehotbar-pop .m.waiting{background:#e0673b;transform:rotate(45deg);}",
+    ".claudehotbar-pop .m.fresh{border-radius:50%;background:#378ADD;}",
+    ".claudehotbar-pop .m.aging{background:#e0673b;transform:rotate(45deg);}",
     ".claudehotbar-pop .m.idle{border-radius:50%;border:1.5px solid #8f8d88;box-sizing:border-box;}",
     ".claudehotbar-pop .m.blocked{border-radius:2px;background:#e0a24b;}",
+    ".claudehotbar-pop .m.question{display:flex;flex:none;color:#e24b4a;width:auto;height:auto;}",
     // expanded panel: fixed-height flex column — search header stays put,
     // only the inner .hb-scroll list scrolls (scrollbar spans the list only)
     "#claude-hotbar .hb-panel{position:absolute;top:calc(100% + 6px);right:0;width:300px;",
@@ -461,9 +542,12 @@
 
   function marker(st, s) {
     if (st === "error") return '<span class="m-alert">' + ic("alert", 13) + "</span>";
+    if (st === "question") return '<span class="m question">' + ic("alert", 13) + "</span>";
     return '<span class="m ' + st + '"></span>';
   }
-  var STATE_LABEL = { blocked: "needs you", waiting: "waiting", running: "running", idle: "idle" };
+  // label text is unchanged between fresh/aging ("done") — only marker
+  // color/shape differs; question gets its own "question?" label
+  var STATE_LABEL = { blocked: "needs you", fresh: "done", aging: "done", question: "question?", running: "running", idle: "idle" };
   // errorCategory -> a human label, per the app's own error taxonomy (read from
   // its bundle). Credits categories replace the row's duration entirely with
   // an "Upgrade credits" action — no point counting how long you've been stuck.
@@ -540,7 +624,7 @@
   function barItem(s) {
     var id = sid(s), st = state(s, lastUnread);
     var el = document.createElement("div");
-    el.className = "hb-item" + (st === "error" ? " error" : st === "blocked" ? " blocked" : st === "waiting" ? " waiting" : "");
+    el.className = "hb-item" + (st === "error" ? " error" : st === "question" ? " question" : st === "blocked" ? " blocked" : st === "fresh" ? " fresh" : st === "aging" ? " aging" : "");
     el.onmousedown = markInteracting;
     el.onclick = function (e) { isCreditError(s) ? openUpgrade(e) : jump(id); };
     el.onmouseenter = function () { scheduleHover(s, el); };
@@ -582,16 +666,31 @@
 
   function render(sessions, unread) {
     var byOldest = function (a, b) { return (durationFor(b, state(b, unread))) - (durationFor(a, state(a, unread))); };
-    // priority: error (session is broken) > blocked (needs your answer) > waiting (unread) > running > pinned-idle
+    // priority: error > question > blocked > fresh > aging > running > pinned-idle
     var errored = sessions.filter(function (s) { return hasError(s); });
+    var question = sessions.filter(function (s) { return !hasError(s) && !needsInput(s) && unread[sid(s)] && !dismissed[sid(s)] && looksLikeQuestion(transcriptCache[sid(s)]); });
     var blocked = sessions.filter(function (s) { return !hasError(s) && needsInput(s); });
-    var waiting = sessions.filter(function (s) { return !hasError(s) && !needsInput(s) && unread[sid(s)]; });
+    var fresh = sessions.filter(function (s) { var id = sid(s); return !hasError(s) && !needsInput(s) && !question.some(function (q) { return sid(q) === id; }) && waitAgeState(id, unread) === "fresh" && !dismissed[id]; });
+    var aging = sessions.filter(function (s) { var id = sid(s); return !hasError(s) && !needsInput(s) && !question.some(function (q) { return sid(q) === id; }) && waitAgeState(id, unread) === "aging" && !dismissed[id]; });
     var running = sessions.filter(function (s) { return !hasError(s) && !needsInput(s) && !unread[sid(s)] && isRunning(s); });
     var pinned = sessions.filter(function (s) { return pins[sid(s)] && !hasError(s) && !needsInput(s) && !unread[sid(s)] && !isRunning(s); });
-    errored.sort(byOldest); blocked.sort(byOldest); waiting.sort(byOldest); running.sort(byOldest);
+    errored.sort(byOldest); question.sort(byOldest); blocked.sort(byOldest); fresh.sort(byOldest); aging.sort(byOldest); running.sort(byOldest);
 
-    // collapsed bar: errored, then blocked, then waiting, then running, then pinned — capped
-    var bar = errored.concat(blocked).concat(waiting).concat(running).concat(pinned).slice(0, TOP_N);
+    // collapsed bar: errored, then question, then blocked, then fresh, then
+    // aging, then running, then pinned — capped. question is placed before
+    // fresh/aging and is never dropped by the slice differently than
+    // blocked/errored — it just naturally survives being earlier in the
+    // concat order.
+    var bar = errored.concat(question).concat(blocked).concat(fresh).concat(aging).concat(running).concat(pinned).slice(0, TOP_N);
+    // if any sessions exist at all, always show at least TOP_N — backfill
+    // remaining slots with the most-recently-active sessions not already shown
+    if (bar.length < TOP_N && sessions.length) {
+      var barIds = {};
+      bar.forEach(function (s) { barIds[sid(s)] = 1; });
+      var filler = sessions.filter(function (s) { return !barIds[sid(s)]; })
+        .sort(function (a, b) { return (tnum(b.lastActivityAt) || 0) - (tnum(a.lastActivityAt) || 0); });
+      bar = bar.concat(filler.slice(0, TOP_N - bar.length));
+    }
     var oldScroll = root.querySelector(".hb-scroll");
     if (oldScroll) panelScroll = oldScroll.scrollTop;   // keep scroll across re-renders
     root.innerHTML = "";
@@ -627,14 +726,14 @@
       root.appendChild(exp);
     }
 
-    var needsAction = errored.length + blocked.length + waiting.length;
+    var needsAction = errored.length + question.length + blocked.length + fresh.length + aging.length;
     var attentionCount = needsAction + running.length;
     // Dark saturated red for a broken session — deliberately far from the
-    // waiting coral (#e0673b), which reads as near-identical at badge size
+    // question/aging coral tones, which read as near-identical at badge size
     // if only hue shifts slightly. An icon inside the badge makes it
     // unmistakable regardless of color perception, not just a color swap.
-    var badgeBg = errored.length ? "#A32D2D" : (blocked.length ? "#e0a24b" : (waiting.length ? "#e0673b" : "#5dcaa5"));
-    var badgeFg = errored.length ? "#fff" : (blocked.length ? "#3a2a08" : (waiting.length ? "#fff" : "#04342c"));
+    var badgeBg = errored.length ? "#A32D2D" : (question.length ? "#e24b4a" : (blocked.length ? "#e0a24b" : (aging.length ? "#e0673b" : (fresh.length ? "#378ADD" : "#5dcaa5"))));
+    var badgeFg = errored.length ? "#fff" : (question.length ? "#fff" : (blocked.length ? "#3a2a08" : (aging.length ? "#fff" : (fresh.length ? "#fff" : "#04342c"))));
     var badgeIcon = errored.length ? '<span class="hb-count-icon">' + ic("alert", 10) + "</span>" : "";
     var tg = document.createElement("div");
     tg.className = "hb-toggle";
@@ -669,14 +768,18 @@
       scroll.className = "hb-scroll";
       panel.appendChild(scroll);
 
-      var pinnedAll = sessions.filter(function (s) { return pins[sid(s)] && !hasError(s) && match(s); });
+      // only idle pinned sessions here — a pinned session with its own status
+      // (question/blocked/fresh/aging/running) already appears in that group
+      var pinnedAll = pinned.filter(match);
       var recent = sessions.filter(function (s) { return !hasError(s) && !unread[sid(s)] && !isRunning(s) && !pins[sid(s)] && match(s); })
         .sort(function (a, b) { return (tnum(b.lastActivityAt) || 0) - (tnum(a.lastActivityAt) || 0); });
       var recentShown = recent.slice(0, RECENT_CAP);
 
-      group("Needs attention · " + errored.filter(match).length, "#e24b4a", errored.filter(match));
+      group("Needs attention · " + errored.filter(match).length, "#A32D2D", errored.filter(match));
+      group("Question · " + question.filter(match).length, "#e24b4a", question.filter(match));
       group("Needs you · " + blocked.filter(match).length, "#e0a24b", blocked.filter(match));
-      group("Waiting on you · " + waiting.filter(match).length, "#e0673b", waiting.filter(match));
+      group("Done · " + fresh.filter(match).length, "#378ADD", fresh.filter(match));
+      group("Aging · " + aging.filter(match).length, "#e0673b", aging.filter(match));
       group("Running · " + running.filter(match).length, "#5dcaa5", running.filter(match));
       group("Pinned · " + pinnedAll.length, "#6b9bd1", pinnedAll);
       group("Recent · showing " + recentShown.length + " of " + recent.length, "#8f8d88", recentShown);

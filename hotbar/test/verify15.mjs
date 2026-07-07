@@ -12,6 +12,14 @@ for (let i=0;i<hexes.length;i++) for (let j=i+1;j<hexes.length;j++) {
   if (d < 28) fail.push(`near-duplicate colors: ${hexes[i]} vs ${hexes[j]} (distance ${d.toFixed(1)})`);
 }
 ok(!hexes.includes("#c9a24b"), "old clashing pinned color (#c9a24b) removed from source");
+// the state-model fix reassigns these hexes to new group() entries — confirm
+// the reassigned palette (question/#e24b4a, aging/#e0673b, plus the new
+// fresh/#378ADD and error/#A32D2D) is present and still pairwise-distinct
+// (verified by the loop above, which covers every group() color literal)
+ok(hexes.includes("#e24b4a"), "question group color (#e24b4a, reassigned from sole error ownership) present");
+ok(hexes.includes("#e0673b"), "aging group color (#e0673b, reassigned from waiting) present");
+ok(hexes.includes("#378ADD"), "fresh group color (#378ADD) present");
+ok(hexes.includes("#A32D2D"), "error/'Needs attention' group uses the dark saturated red, distinct from question's #e24b4a");
 
 // 2. injectFake auto-expiry
 const dom=new JSDOM("<!doctype html><html><body></body></html>",{url:"https://claude.ai/",runScripts:"outside-only"});

@@ -52,6 +52,11 @@ console.log("cowork focus:",coworkFocused,"| router nav:",w.__nav);
 ok(coworkFocused==="cw1","cowork jump calls LocalAgentModeSessions.setFocusedSession");
 ok(w.__nav===null,"cowork jump does NOT router-navigate to /epitaxy");
 
+// jump() also stamps+persists the dismiss alongside the bridge call
+const dismissed=JSON.parse(w.localStorage.getItem("hotbar-dismissed")||"{}");
+console.log("dismissed after jump:", dismissed);
+ok(dismissed.cw1!=null,"jump(id) stamps dismissed[id] and persists to hotbar-dismissed");
+
 // hover a cowork item -> uses cowork transcript
 foodItem.dispatchEvent(new w.Event("mouseenter"));
 await new w.Promise(r=>setTimeout(r,1050)); // clear the new 1s hover-debounce

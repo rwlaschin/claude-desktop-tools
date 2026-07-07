@@ -1,0 +1,82 @@
+<!--
+---
+modified: 2026-07-06
+dependencies: [hotbar.js]
+---
+-->
+<style>
+  body { background: #1c1c1e; font: 12px/1.25 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; color: #e8e6df; padding: 24px; }
+  section[data-state] { display: flex; align-items: center; gap: 16px; padding: 12px 0; }
+  section[data-state] .label { color: #9a9891; width: 200px; flex: none; }
+  .dock-frag {
+    display: flex; align-items: stretch; background: rgba(28,28,30,.96);
+    border: 1px solid rgba(255,255,255,.10); border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.35);
+  }
+
+  /* Real classes/rules transcribed verbatim from hotbar.js's injected <style> block. */
+  .hb-icon {
+    padding: 8px 8px; display: flex; align-items: center; cursor: pointer; font-size: 13px;
+    opacity: .75; border-left: 1px solid rgba(255,255,255,.07);
+    transition: transform .08s ease, background .08s ease;
+  }
+  .hb-icon:hover { opacity: 1; background: rgba(255,255,255,.06); }
+  .hb-icon:active { transform: scale(.9); background: rgba(255,255,255,.16); }
+  .hb-icon.on { opacity: 1; color: #e0673b; }
+  .hb-icon svg { display: block; }
+</style>
+
+<!-- .hb-icon — base style shared by the spy-mode and export controls in the
+     collapsed-dock. Icons are real Lucide SVGs (24x24 grid, currentColor,
+     stroke 2), not emoji, rendered via the ic() helper in hotbar.js. Two
+     dock-level instances: spy toggle (always shown) and export (shown only
+     while spy mode is on). -->
+
+<section data-state="spy-off">
+  <span class="label">spy toggle — default (spy off)</span>
+  <div class="dock-frag">
+    <div class="hb-icon" title="Spy off — discover live data hooks">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M14 18a2 2 0 0 0-4 0"/><path d="m19 11-2.11-6.657a2 2 0 0 0-2.752-1.148l-1.276.61A2 2 0 0 1 12 4H8.5a2 2 0 0 0-1.925 1.456L5 11"/><path d="M2 11h20"/><circle cx="17" cy="18" r="3"/><circle cx="7" cy="18" r="3"/>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<section data-state="spy-on">
+  <span class="label">spy toggle — .on (spy loop running)</span>
+  <div class="dock-frag">
+    <div class="hb-icon on" title="Spy on · 42 captured (click to stop)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M14 18a2 2 0 0 0-4 0"/><path d="m19 11-2.11-6.657a2 2 0 0 0-2.752-1.148l-1.276.61A2 2 0 0 1 12 4H8.5a2 2 0 0 0-1.925 1.456L5 11"/><path d="M2 11h20"/><circle cx="17" cy="18" r="3"/><circle cx="7" cy="18" r="3"/>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<section data-state="export-visible">
+  <span class="label">export button — shown only while spy is on</span>
+  <div class="dock-frag">
+    <div class="hb-icon on" title="Spy on · 42 captured (click to stop)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M14 18a2 2 0 0 0-4 0"/><path d="m19 11-2.11-6.657a2 2 0 0 0-2.752-1.148l-1.276.61A2 2 0 0 1 12 4H8.5a2 2 0 0 0-1.925 1.456L5 11"/><path d="M2 11h20"/><circle cx="17" cy="18" r="3"/><circle cx="7" cy="18" r="3"/>
+      </svg>
+    </div>
+    <div class="hb-icon" title="Export 42 captured events (JSON)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<section data-state="hover">
+  <span class="label">.hb-icon:hover (opacity 1, subtle bg tint)</span>
+  <div class="dock-frag">
+    <div class="hb-icon" style="opacity:1;background:rgba(255,255,255,.06)" title="Spy off — discover live data hooks">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M14 18a2 2 0 0 0-4 0"/><path d="m19 11-2.11-6.657a2 2 0 0 0-2.752-1.148l-1.276.61A2 2 0 0 1 12 4H8.5a2 2 0 0 0-1.925 1.456L5 11"/><path d="M2 11h20"/><circle cx="17" cy="18" r="3"/><circle cx="7" cy="18" r="3"/>
+      </svg>
+    </div>
+  </div>
+</section>

@@ -1,5 +1,5 @@
 import { JSDOM } from "jsdom"; import fs from "fs";
-const src = fs.readFileSync("/Users/mac/Documents/Work/claude-hotbar/hotbar.js","utf8");
+const src = fs.readFileSync(new URL("../hotbar.js", import.meta.url), "utf8");
 const dom=new JSDOM("<!doctype html><html><body></body></html>",{url:"https://claude.ai/",runScripts:"outside-only"});
 const w=dom.window; const NOW=Date.now();
 w.Notification=function(){};w.Notification.permission="granted";w.Notification.requestPermission=()=>{};

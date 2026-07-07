@@ -1,0 +1,72 @@
+<!--
+---
+modified: 2026-07-07
+dependencies: [hotbar.js]
+---
+-->
+<style>
+  body { background: #1c1c1e; font: 12px/1.25 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; color: #e8e6df; padding: 24px; }
+  section[data-state] { display: flex; align-items: center; gap: 10px; padding: 10px 0; }
+  section[data-state] .label { color: #9a9891; width: 120px; flex: none; }
+
+  /* Real classes/rules transcribed verbatim from hotbar.js's injected <style> block. */
+  .m { width: 9px; height: 9px; flex: none; display: inline-block; }
+  .m.running { border-radius: 50%; background: #5dcaa5; box-shadow: 0 0 6px #5dcaa5; }
+  .m.fresh { border-radius: 50%; background: #378ADD; box-shadow: 0 0 6px #378ADD; }
+  .m.aging { background: #e0673b; transform: rotate(45deg); }
+  .m.idle { border-radius: 50%; border: 1.5px solid #8f8d88; box-sizing: border-box; }
+  .m.blocked { border-radius: 2px; background: #e0a24b; box-shadow: 0 0 6px #e0a24b; }
+  .m.question { display: flex; flex: none; color: #e24b4a; width: auto; height: auto; }
+  .m-alert { display: flex; flex: none; color: #e24b4a; }
+</style>
+
+<!-- .m — 9x9px status dot shown inline before a session's title in
+     attention-item and session-row. Shape + color together, never color
+     alone.
+
+     fresh/aging retire the old single "waiting" state: both read
+     timing.waiting[id], split by age (FRESH_MS = 10min). Same label text
+     ("done · <duration>") — only the marker's color/shape differs. -->
+
+<section data-state="running">
+  <span class="label">running</span>
+  <span class="m running"></span>
+</section>
+
+<section data-state="fresh">
+  <span class="label">fresh (&lt; 10min unread)</span>
+  <span class="m fresh"></span>
+</section>
+
+<section data-state="aging">
+  <span class="label">aging (&#8805; 10min unread)</span>
+  <span class="m aging"></span>
+</section>
+
+<section data-state="idle">
+  <span class="label">idle</span>
+  <span class="m idle"></span>
+</section>
+
+<section data-state="blocked">
+  <span class="label">blocked</span>
+  <span class="m blocked"></span>
+</section>
+
+<section data-state="question">
+  <span class="label">question (last message reads as a question)</span>
+  <span class="m question">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>
+    </svg>
+  </span>
+</section>
+
+<section data-state="error">
+  <span class="label">error (glyph is .m-alert, same #e24b4a as question's icon — distinguished by the surrounding .hb-item.error chrome, which is the dark red #A32D2D reserved exclusively for hasError)</span>
+  <span class="m-alert">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>
+    </svg>
+  </span>
+</section>
