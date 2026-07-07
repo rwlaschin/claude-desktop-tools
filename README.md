@@ -35,3 +35,23 @@ first-install time, which may include whatever other patches existed then).
 If you ever see a tool "still there" after uninstalling it, or duplicated
 console log lines from one tool, extract `app.asar` and search for that
 tool's `__CLAUDE_*_LOADER__` marker to check for stale copies.
+
+## Help wanted
+
+Both `hotbar/` and `chat-input-extension/` are macOS/Linux only today.
+Contributions welcome for:
+
+- **Windows.** `install-persist.sh` is bash + `codesign`, neither of which
+  apply on Windows. Needs a PowerShell (or similar) equivalent: find
+  `app.asar` under the Windows install path (typically
+  `%LOCALAPPDATA%\Programs\Claude\resources\app.asar` — unverified, please
+  confirm on a real Windows install), inject the same loader into
+  `mainView.js`, and skip the re-signing step entirely (Windows has no
+  direct equivalent, though code-signing/SmartScreen implications are worth
+  checking).
+- **Mobile.** Unclear this is even feasible with the current approach — both
+  tools rely on DevTools console access and patching an Electron app's
+  `app.asar`, neither of which the Claude mobile apps expose. If you know of
+  a way to extend either tool's behavior on mobile, open an issue with what
+  you've found before sending a PR — this needs a feasibility discussion
+  first, not just a port.
