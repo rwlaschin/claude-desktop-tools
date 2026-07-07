@@ -1,0 +1,13 @@
+{
+  "name": "chat-input-extension-tests",
+  "private": true,
+  "version": "1.0.0",
+  "description": "jsdom verification suite for ../chat-input-extension.js",
+  "type": "module",
+  "scripts": {
+    "test": "for f in *.mjs; do node \"$f\" || exit 1; done"
+  },
+  "dependencies": {
+    "jsdom": "^29.1.1"
+  }
+}
