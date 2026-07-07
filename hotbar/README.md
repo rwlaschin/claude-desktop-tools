@@ -65,9 +65,12 @@ exposed here.
 The bar appears at the top. Remove it with `window.__claudeHotbar.destroy()`.
 This disappears when you reload/relaunch — it's the safe way to test.
 
-## Auto-load on every launch (optional, advanced)
+## Auto-load on every launch (optional, advanced — macOS only)
 
 `install-persist.sh` patches the preload so the hotbar loads automatically.
+**macOS only** — it hardcodes `/Applications/Claude.app` and re-signs with
+`codesign`, both macOS-specific. The paste-in-console step above has no such
+requirement.
 
 ```bash
 cd claude-hotbar

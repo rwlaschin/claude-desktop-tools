@@ -83,11 +83,13 @@ also fully removes it**, since nothing is patched into the app. Pasting it
 again is always safe: the script guards against a double install by tearing
 down any prior install first.
 
-## Auto-load on every launch (optional, advanced)
+## Auto-load on every launch (optional, advanced — macOS only)
 
 `install-persist.sh` patches the preload so the script loads automatically,
 same approach as `hotbar/`'s installer — independent of it, own backup file,
-won't touch or conflict with a hotbar install.
+won't touch or conflict with a hotbar install. **macOS only** — it hardcodes
+`/Applications/Claude.app` and re-signs with `codesign`, both macOS-specific.
+The paste-in-console step above has no such requirement.
 
 ```bash
 cd chat-input-extension
