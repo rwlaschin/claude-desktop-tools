@@ -2,10 +2,16 @@
  * Claude Desktop — Chat Input Markdown Decorations
  * -------------------------------------------------
  * Visually decorates markdown syntax typed into the chat composer
- * (`**bold**`, `*italic*`, `` `code` ``, `~~strike~~`, `# heading`) WITHOUT
- * altering the underlying document text. The raw markdown characters stay in
- * the message and stay visible (dimmed), never hidden — the text that
- * reaches the Claude API is byte-identical to what was typed.
+ * (`**bold**`, `*italic*`, `# heading`) WITHOUT altering the underlying
+ * document text. The raw markdown characters stay in the message and stay
+ * visible (dimmed), never hidden — the text that reaches the Claude API is
+ * byte-identical to what was typed.
+ *
+ * Inline `` `code` `` and `~~strikethrough~~` are NOT handled here — live
+ * testing in the real app confirmed the composer already renders those
+ * natively (via real input-rule marks, not decorations — the delimiter
+ * characters disappear entirely), so adding decoration rules for them would
+ * be redundant.
  *
  * How it works: the app's composer is a TipTap/ProseMirror editor
  * (`.tiptap.ProseMirror`). This script reads the real `Plugin`/
@@ -31,14 +37,13 @@
   var PLUGIN_KEY = "chatInputExtensionDecorations";
 
   // ---- pattern-matching rules --------------------------------------------
-  // Checked in this order every debounced pass: code first (so a bold rule
-  // never matches "**not bold**" inside a code span), then bold, italic,
-  // strike, heading. Exported on the API for unit testing.
+  // Checked in this order every debounced pass: bold, italic, heading.
+  // Inline code and strikethrough are handled natively by the app already
+  // (see header comment) and are deliberately not in this table.
+  // Exported on the API for unit testing.
   var RULES = [
-    { name: "code",    re: /`([^`\n]+)`/g },
     { name: "bold",    re: /\*\*([^\s*][^*]*?)\*\*|__([^\s_][^_]*?)__/g },
     { name: "italic",  re: /(?<![*\w])\*([^\s*][^*]*?)\*(?!\*)|(?<![_\w])_([^\s_][^_]*?)_(?!_)/g },
-    { name: "strike",  re: /~~([^\s~][^~]*?)~~/g },
     { name: "heading", re: /^(#{1,3}|#{4,6})\s+\S.*$/ } // line-start only, tested once per line
   ];
 
@@ -53,16 +58,13 @@
   // delimiter/inner/delimiter decorations so the delimiter characters render
   // dimmed (muted, always visible, never hidden) while only the inner text
   // gets the emphasis styling.
-  var DELIM_LEN = { code: 1, bold: 2, italic: 1, strike: 2 };
+  var DELIM_LEN = { bold: 2, italic: 1 };
 
   // ---- scanner: pure function, no DOM/PM dependency ----------------------
   // Scans one block of text (a paragraph or heading-candidate line) and
   // returns an array of {name, from, to, hashLen} matches, in document
-  // order, with no overlaps. `code` is matched first and its ranges are
-  // excluded from every subsequent rule so a `` `**not bold**` `` code span
-  // is never re-matched by the bold/italic/strike rules. No nesting support:
-  // once a range is claimed by one rule, nothing else can match inside it
-  // (outer pair wins).
+  // order, with no overlaps. No nesting support: once a range is claimed by
+  // one rule, nothing else can match inside it (outer pair wins).
   function scanLine(text) {
     var matches = [];
     var claimed = []; // sorted array of [from, to) already-claimed ranges
@@ -77,19 +79,18 @@
     function claim(from, to) { claimed.push([from, to]); }
 
     // heading: line-start only, tested once (not a global exec loop)
-    var headingMatch = RULES[4].re.exec(text);
+    var headingMatch = RULES[2].re.exec(text);
     if (headingMatch) {
       var hashes = headingMatch[1];
       var from = headingMatch.index;
       var to = from + hashes.length; // decorate only the leading hashes+space marker region is handled by caller; we report the hash range
       matches.push({ name: "heading", from: from, to: from + text.length, hashLen: hashes.length, sizeClass: headingSizeClass(hashes) });
       // heading claims the whole line for rendering purposes, but inline
-      // rules (bold/italic/code/strike) may still run inside it, so we do
-      // NOT add it to `claimed` — it's a block-level decoration, not an
-      // inline exclusion.
+      // rules (bold/italic) may still run inside it, so we do NOT add it to
+      // `claimed` — it's a block-level decoration, not an inline exclusion.
     }
 
-    for (var r = 0; r < 4; r++) {
+    for (var r = 0; r < 2; r++) {
       var rule = RULES[r];
       rule.re.lastIndex = 0;
       var m;
@@ -361,9 +362,6 @@
   style.textContent = [
     ".cie-bold{font-weight:700;}",
     ".cie-italic{font-style:italic;}",
-    ".cie-code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;",
-    "  background:rgba(127,127,127,.14);border-radius:3px;padding:0 2px;}",
-    ".cie-strike{text-decoration:line-through;}",
     ".cie-heading{font-weight:600;}",
     ".cie-h1{font-size:1.5em;}",
     ".cie-h2{font-size:1.3em;}",

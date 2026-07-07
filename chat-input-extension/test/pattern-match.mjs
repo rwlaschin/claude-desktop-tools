@@ -1,5 +1,9 @@
 // Pattern-matching correctness: RULES offsets, match order/precedence,
-// code-span exclusion, unclosed-delimiter no-match, heading line-start-only.
+// unclosed-delimiter no-match, heading line-start-only.
+// Inline code and strikethrough are deliberately not covered — live testing
+// against the real app showed both already render natively (real marks,
+// delimiters disappear entirely), so decoration rules for them were removed
+// as redundant.
 import { JSDOM } from "jsdom";
 import fs from "fs";
 import assert from "assert";
@@ -15,24 +19,17 @@ const scanLine = api._scanLine;
 const RULES = api._RULES;
 
 // ---- RULES table shape ---------------------------------------------------
-assert.strictEqual(RULES.length, 5, "RULES should have 5 entries");
+assert.strictEqual(RULES.length, 3, "RULES should have 3 entries");
 // RULES/array objects live in the jsdom realm, so compare via plain
 // primitives (joined string) rather than assert.deepStrictEqual, which
 // checks cross-realm prototype identity and would false-fail here.
 assert.strictEqual(
   Array.prototype.map.call(RULES, r => r.name).join(","),
-  ["code", "bold", "italic", "strike", "heading"].join(","),
-  "RULES must be in code, bold, italic, strike, heading order"
+  ["bold", "italic", "heading"].join(","),
+  "RULES must be in bold, italic, heading order"
 );
 
 // ---- each rule matches its own pattern with correct offsets --------------
-{
-  const matches = scanLine("`code`");
-  assert.strictEqual(matches.length, 1);
-  assert.strictEqual(matches[0].name, "code");
-  assert.strictEqual(matches[0].from, 0);
-  assert.strictEqual(matches[0].to, 6);
-}
 {
   const matches = scanLine("**bold**");
   assert.strictEqual(matches.length, 1);
@@ -48,33 +45,10 @@ assert.strictEqual(
   assert.strictEqual(matches[0].to, 8);
 }
 {
-  const matches = scanLine("~~strike~~");
-  assert.strictEqual(matches.length, 1);
-  assert.strictEqual(matches[0].name, "strike");
-  assert.strictEqual(matches[0].from, 0);
-  assert.strictEqual(matches[0].to, 10);
-}
-{
   const matches = scanLine("# heading");
   const heading = matches.find(m => m.name === "heading");
   assert.ok(heading, "heading rule should match a line starting with #");
   assert.strictEqual(heading.from, 0);
-}
-
-// ---- code span excludes bold/italic/strike from re-matching it -----------
-{
-  const text = "`**not bold**` and **actually bold**";
-  const matches = scanLine(text);
-  const names = matches.map(m => m.name);
-  // exactly one code match covering the backticked span, and exactly one
-  // bold match for the real bold run outside it — the content inside the
-  // code span must never also produce a "bold" match.
-  assert.strictEqual(names.filter(n => n === "code").length, 1, "exactly one code match");
-  assert.strictEqual(names.filter(n => n === "bold").length, 1, "exactly one bold match (the one outside the code span)");
-  const codeMatch = matches.find(m => m.name === "code");
-  const boldMatch = matches.find(m => m.name === "bold");
-  assert.strictEqual(text.slice(codeMatch.from, codeMatch.to), "`**not bold**`");
-  assert.strictEqual(text.slice(boldMatch.from, boldMatch.to), "**actually bold**");
 }
 
 // ---- italic regex does not fire adjacent to a ** bold run -----------------
@@ -103,17 +77,6 @@ assert.strictEqual(
   const italics = matches.filter(m => m.name === "italic");
   assert.strictEqual(italics.length, 0, "an unclosed * delimiter must not decorate until closed");
 }
-{
-  const matches = scanLine("`code with no close");
-  const codes = matches.filter(m => m.name === "code");
-  assert.strictEqual(codes.length, 0, "an unclosed ` delimiter must not decorate until closed");
-}
-{
-  const matches = scanLine("~~strike with no close");
-  const strikes = matches.filter(m => m.name === "strike");
-  assert.strictEqual(strikes.length, 0, "an unclosed ~~ delimiter must not decorate until closed");
-}
-
 // ---- heading only matches at line start -----------------------------------
 {
   const matches = scanLine("not a # heading because it's not at line start");

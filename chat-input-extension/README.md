@@ -6,13 +6,17 @@ underlying message text**:
 
 - `**bold**` / `__bold__` → bold weight
 - `*italic*` / `_italic_` → italic slant
-- `` `code` `` → monospace, subtle background
-- `~~strike~~` → strikethrough
 - `# heading` / `## heading` / `### heading` (and further `#### `–`###### `,
   which collapse into the `###` size) → larger, bolder text
 
-The raw markdown characters (`**`, `` ` ``, `~~`, `#`) stay in the message and
-stay **visible, dimmed — never hidden**. Precise cursor placement between a
+Inline `` `code` `` and `~~strikethrough~~` are intentionally **not**
+handled — live testing in the real app showed the composer already renders
+both natively (real marks; the delimiter characters disappear entirely,
+unlike this script's dimmed-but-visible approach), so decoration rules for
+them would be redundant.
+
+The raw markdown characters (`**`, `#`) stay in the message and stay
+**visible, dimmed — never hidden**. Precise cursor placement between a
 delimiter and the word matters more than clean prose in a short-lived chat
 message. The composer's actual text content is byte-identical to what was
 typed at all times — that raw text is exactly what reaches the Claude API.
@@ -44,13 +48,11 @@ with a live `.editor`). This script:
    mounts after the script has already run is picked up automatically, no
    manual re-paste needed.
 
-Matching rules run in this order every debounced pass — code first, so
-`` `**not bold**` `` inside a code span is never matched by the bold rule:
-code → bold → italic → strike → heading. An unclosed delimiter (`"**bold"`
-with no closing pair yet) produces no decoration until it's closed, so there's
-no flicker while typing. There is no nesting support in v1 — an outer pair
-"wins" the span it claims; inner delimiters within an already-claimed span are
-not separately decorated.
+Matching rules run in this order every debounced pass: bold → italic →
+heading. An unclosed delimiter (`"**bold"` with no closing pair yet) produces
+no decoration until it's closed, so there's no flicker while typing. There is
+no nesting support in v1 — an outer pair "wins" the span it claims; inner
+delimiters within an already-claimed span are not separately decorated.
 
 No app files are touched by the script itself — it runs entirely in the page,
 and only visually restyles ranges in the composer; it never edits the
@@ -63,8 +65,8 @@ document.
 3. Paste the entire contents of
    [`chat-input-extension.js`](chat-input-extension.js) and press Enter
 
-Typing `**bold**`, `*italic*`, `` `code` ``, `~~strike~~`, or `# heading` now
-renders visually styled about 400ms after you stop typing.
+Typing `**bold**`, `*italic*`, or `# heading` now renders visually styled
+about 400ms after you stop typing.
 
 ## Removing it
 

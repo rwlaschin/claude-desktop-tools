@@ -94,9 +94,10 @@ function buildEditorFor(text) {
   api.destroy();
 }
 
-// ---- multi-pattern fixture: bold, italic, code, strike, heading together --
+// ---- multi-pattern fixture: bold, italic, heading together ----------------
+// (code/strike deliberately excluded — the app renders those natively)
 {
-  const text = "# Heading **bold** *italic* `code` ~~strike~~";
+  const text = "# Heading **bold** *italic*";
   const { editor } = buildEditorFor(text);
   const composerNode = w.document.querySelector(".tiptap.ProseMirror");
   composerNode.editor = editor;
@@ -111,8 +112,6 @@ function buildEditorFor(text) {
   assert.ok(classes.some(c => c.indexOf("cie-heading") === 0), "a heading decoration should be present");
   assert.ok(classes.includes("cie-bold"), "a bold decoration should be present");
   assert.ok(classes.includes("cie-italic"), "an italic decoration should be present");
-  assert.ok(classes.includes("cie-code"), "a code decoration should be present");
-  assert.ok(classes.includes("cie-strike"), "a strike decoration should be present");
 
   api.destroy();
 }
