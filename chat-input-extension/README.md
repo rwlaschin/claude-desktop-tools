@@ -83,13 +83,18 @@ also fully removes it**, since nothing is patched into the app. Pasting it
 again is always safe: the script guards against a double install by tearing
 down any prior install first.
 
-## Auto-load on every launch (optional, advanced — macOS only)
+## Auto-load on every launch (optional, advanced — macOS/Linux)
 
 `install-persist.sh` patches the preload so the script loads automatically,
-same approach as `hotbar/`'s installer — independent of it, own backup file,
-won't touch or conflict with a hotbar install. **macOS only** — it hardcodes
-`/Applications/Claude.app` and re-signs with `codesign`, both macOS-specific.
-The paste-in-console step above has no such requirement.
+same approach as `hotbar/`'s installer — its own backup file and marker, so
+installing/uninstalling this tool doesn't directly touch hotbar's patch code.
+It auto-detects `app.asar`'s location: `/Applications/Claude.app` or
+`~/Applications/Claude.app` on macOS, `/usr/lib/claude-desktop` (the official
+apt package's install path) on Linux. **Windows is not supported** by this
+bash script. The Linux path is based on Anthropic's documented install
+location, not verified against a live Linux install — if it doesn't find
+yours, edit `detect_asar()` in the script. The paste-in-console step above
+has no platform dependency.
 
 ```bash
 cd chat-input-extension
@@ -98,9 +103,12 @@ cd chat-input-extension
 
 **Understand the tradeoffs first:**
 
-- It modifies `app.asar`, which **breaks Anthropic's code signature**. The
-  script re-signs the app ad-hoc so it still launches, but this is
-  **unsupported by Anthropic** and could interfere with app integrity checks.
+- On macOS, it modifies `app.asar`, which **breaks Anthropic's code
+  signature**. The script re-signs the app ad-hoc so it still launches, but
+  this is **unsupported by Anthropic** and could interfere with app
+  integrity checks. On Linux there's no equivalent signature check, but a
+  package-manager integrity check (`dpkg -V claude-desktop`) will flag
+  `app.asar` as modified — harmless, but expected.
 - A **Claude app update wipes the patch** (it replaces `app.asar`). Re-run the
   script after each update.
 - It's tied to the current app version's internals (the `.tiptap.ProseMirror`
@@ -111,6 +119,10 @@ cd chat-input-extension
   `window.__chatInputExtension.destroy()` or `./uninstall.sh`. The script's
   own defensive guards (never-throw decoration passes, graceful skip on
   sourcing failure) still apply either way.
+- If `hotbar/`'s installer is also in use on this machine: both tools patch
+  the same shared `app.asar`. Uninstalling/reinstalling out of order can
+  resurrect a stale copy of the other tool's patch — see the top-level
+  `README.md`'s note on this.
 
 Reverse it any time:
 

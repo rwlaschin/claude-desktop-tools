@@ -65,12 +65,16 @@ exposed here.
 The bar appears at the top. Remove it with `window.__claudeHotbar.destroy()`.
 This disappears when you reload/relaunch — it's the safe way to test.
 
-## Auto-load on every launch (optional, advanced — macOS only)
+## Auto-load on every launch (optional, advanced — macOS/Linux)
 
 `install-persist.sh` patches the preload so the hotbar loads automatically.
-**macOS only** — it hardcodes `/Applications/Claude.app` and re-signs with
-`codesign`, both macOS-specific. The paste-in-console step above has no such
-requirement.
+It auto-detects `app.asar`'s location: `/Applications/Claude.app` or
+`~/Applications/Claude.app` on macOS, `/usr/lib/claude-desktop` (the official
+apt package's install path) on Linux. **Windows is not supported** by this
+bash script. The Linux path is based on Anthropic's documented install
+location, not verified against a live Linux install — if it doesn't find
+yours, edit `detect_asar()` in the script. The paste-in-console step above
+has no platform dependency.
 
 ```bash
 cd claude-hotbar
@@ -79,14 +83,22 @@ cd claude-hotbar
 
 **Understand the tradeoffs first:**
 
-- It modifies `app.asar`, which **breaks Anthropic's code signature**. The
-  script re-signs the app ad-hoc so it still launches, but this is **unsupported
-  by Anthropic** and could interfere with app integrity checks.
+- On macOS, it modifies `app.asar`, which **breaks Anthropic's code
+  signature**. The script re-signs the app ad-hoc so it still launches, but
+  this is **unsupported by Anthropic** and could interfere with app
+  integrity checks. On Linux there's no equivalent signature check, but a
+  package-manager integrity check (`dpkg -V claude-desktop`) will flag
+  `app.asar` as modified — harmless, but expected.
 - A **Claude app update wipes the patch** (it replaces `app.asar`). Re-run the
   script after each update.
 - It's tied to the current app version's internals (var names / the exposed
   `claude.web` namespace). If a future version changes these, the script may
   need updating.
+- If `chat-input-extension/`'s installer is also in use on this machine: each
+  tool's backup/marker is independent, but both patch the same shared
+  `app.asar`. Uninstalling/reinstalling out of order can resurrect a stale
+  copy of the other tool's patch — see the top-level `README.md`'s note on
+  this.
 
 Reverse it any time:
 
@@ -95,7 +107,7 @@ Reverse it any time:
 ```
 
 A one-time backup (`app.asar.hotbar-backup`) is created on first install so the
-original can always be restored.
+pre-patch state can always be restored.
 
 ## Files
 
