@@ -79,6 +79,7 @@
   var spyBuf = [];             // ring buffer of {t, source, key, value}
   var spySnap = {};            // last-seen serialized value per key, for diffing
   var transcriptCache = {};    // sessionId -> last preview text
+  var transcriptCacheAt = {};  // sessionId -> s.lastActivityAt the cache was captured at (invalidation key)
 
   // ---- helpers ---------------------------------------------------------
   function sid(s) { return s.sessionId || s.id || s.cliSessionId; }
@@ -204,14 +205,18 @@
   }
   // pull the last message from the transcript for a rich hover preview
   function fetchPreview(s, cb) {
-    var id = sid(s);
-    if (transcriptCache[id]) { cb(transcriptCache[id]); return; }
+    var id = sid(s), activityAt = tnum(s.lastActivityAt);
+    // cache is only valid for the activity snapshot it was captured at — new
+    // activity (a fresh reply, question or not) must invalidate a stale
+    // cached "question" text instead of being judged against it forever.
+    if (transcriptCache[id] && transcriptCacheAt[id] === activityAt) { cb(transcriptCache[id]); return; }
     var bridge = s._kind === "cowork" ? coworkApi : api;   // read the right transcript
     if (!bridge || typeof bridge.getTranscript !== "function") { cb(previewText(s)); return; }
     Promise.resolve(bridge.getTranscript(id)).then(function (tr) {
       var msgs = Array.isArray(tr) ? tr : (tr && (tr.messages || tr.items)) || [];
       var last = lastMessageText(msgs);
       transcriptCache[id] = last || s.initialMessage || "No recent activity.";
+      transcriptCacheAt[id] = activityAt;
       cb(transcriptCache[id]);
     }).catch(function () { cb(s.initialMessage || "No recent activity."); });
   }
@@ -357,7 +362,8 @@
     sessions.forEach(function (s) {
       var id = sid(s);
       if (!unread[id] || dismissed[id] || hasError(s) || needsInput(s)) return;
-      if (waitAgeState(id, unread) === "fresh" && !transcriptCache[id]) fetchPreview(s, function () {});
+      var stale = !transcriptCache[id] || transcriptCacheAt[id] !== tnum(s.lastActivityAt);
+      if (waitAgeState(id, unread) === "fresh" && stale) fetchPreview(s, function () {});
     });
     Object.keys(lastStatus).forEach(function (id) { if (!seen[id]) delete lastStatus[id]; });
   }
