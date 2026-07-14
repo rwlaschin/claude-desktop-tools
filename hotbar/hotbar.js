@@ -89,6 +89,12 @@
   // hasBackgroundActivity stays true while spawned agents/tasks run) — without
   // the latter, a session waiting on a background task renders as idle.
   function isRunning(s) { return (s.isRunning === true || s.hasBackgroundActivity === true) && !s.isArchived; }
+  // main loop live, vs only background agents/tasks still working. The renderer
+  // only gets hasBackgroundActivity (a boolean) — the count lives in
+  // activeBackgroundTasks.size on the main-process session model and is stripped
+  // before getAll() returns, so the marker is a dot, not a number.
+  function loopRunning(s) { return s.isRunning === true && !s.isArchived; }
+  function hasAgents(s) { return s.hasBackgroundActivity === true && !s.isArchived; }
   function titleOf(s) {
     return s.title ||
       (s.userSelectedFolders && s.userSelectedFolders.length
@@ -152,6 +158,10 @@
     if (hasError(s)) return "error";       // most urgent: session is broken, needs action
     if (unread[id] && !dismissed[id] && assistantAsked(id)) return "question";
     if (needsInput(s)) return "blocked";   // waiting on YOUR answer
+    // still working via background tasks — the turn ending marks the session
+    // unread, but it isn't "done" while agents run, so this must beat the
+    // fresh/aging (done) state below. Main-loop running is caught later.
+    if (hasAgents(s)) return "running";
     if (unread[id] && !dismissed[id]) {
       var ageSt = waitAgeState(id, unread);
       if (ageSt) return ageSt;             // "fresh" or "aging"
@@ -524,6 +534,7 @@
     // shape+color status markers
     "#claude-hotbar .m{width:9px;height:9px;flex:none;display:inline-block;}",
     "#claude-hotbar .m.running{border-radius:50%;background:#5dcaa5;box-shadow:0 0 6px #5dcaa5;}",
+    "#claude-hotbar .m.running.agents{background:#9bc34a;box-shadow:0 0 6px #9bc34a;}",
     "#claude-hotbar .m.fresh{border-radius:50%;background:#378ADD;box-shadow:0 0 6px #378ADD;}",
     "#claude-hotbar .m.aging{background:#e0673b;transform:rotate(45deg);}",
     "#claude-hotbar .m.idle{border-radius:50%;border:1.5px solid #8f8d88;box-sizing:border-box;}",
@@ -565,6 +576,7 @@
     ".claudehotbar-pop .meta{margin-top:7px;font-size:10px;color:#78766f;}",
     ".claudehotbar-pop .m{width:9px;height:9px;flex:none;display:inline-block;}",
     ".claudehotbar-pop .m.running{border-radius:50%;background:#5dcaa5;}",
+    ".claudehotbar-pop .m.running.agents{background:#9bc34a;}",
     ".claudehotbar-pop .m.fresh{border-radius:50%;background:#378ADD;}",
     ".claudehotbar-pop .m.aging{background:#e0673b;transform:rotate(45deg);}",
     ".claudehotbar-pop .m.idle{border-radius:50%;border:1.5px solid #8f8d88;box-sizing:border-box;}",
@@ -616,7 +628,11 @@
   function marker(st, s) {
     if (st === "error") return '<span class="m-alert">' + ic("alert", 13) + "</span>";
     if (st === "question") return '<span class="m question">' + ic("alert", 13) + "</span>";
-    return '<span class="m ' + st + '"></span>';
+    // running with background agents but the main loop idle → orangy-green
+    // (distinct from plain running-green when the loop itself is active).
+    var cls = st;
+    if (st === "running" && s && hasAgents(s) && !loopRunning(s)) cls = "running agents";
+    return '<span class="m ' + cls + '"></span>';
   }
   // label text is unchanged between fresh/aging ("done") — only marker
   // color/shape differs; question gets its own "question?" label

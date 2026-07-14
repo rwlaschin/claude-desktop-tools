@@ -22,8 +22,12 @@ before changing `hotbar.js` or adding a new data source/bridge call.
   must never be used as a source of live run state. Use `LocalSessions` for
   that.
 - `LocalSessions.getAgents({sessionId})` returns the agent *registry*
-  (available agent types), not running instances — there is no exposed way
-  to show a live "running sub-agents" list. Don't assume one exists.
+  (available agent types), not running instances. A live "running sub-agents"
+  count is NOT exposed either: the app tracks it as `activeBackgroundTasks`
+  (a Map) on the main-process session model, but `getAll()` marshals that down
+  to the boolean `hasBackgroundActivity` before the renderer sees it. So the
+  hotbar can show WHETHER a session has background tasks (drives the
+  orangy-green "running" marker), but not HOW MANY — dot only, no number.
 - `epitaxy-session-result:<id>` is telemetry (cost/ms/message-uuids), not a
   content summary — using it for the hover preview would silently show the
   wrong thing. The hover preview must use `getTranscript`, falling back to
