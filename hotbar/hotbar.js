@@ -79,11 +79,16 @@
   var spyBuf = [];             // ring buffer of {t, source, key, value}
   var spySnap = {};            // last-seen serialized value per key, for diffing
   var transcriptCache = {};    // sessionId -> last preview text
+  var transcriptRole = {};     // sessionId -> role of that last message ("assistant"|"user"|…)
   var transcriptCacheAt = {};  // sessionId -> s.lastActivityAt the cache was captured at (invalidation key)
 
   // ---- helpers ---------------------------------------------------------
   function sid(s) { return s.sessionId || s.id || s.cliSessionId; }
-  function isRunning(s) { return s.isRunning === true && !s.isArchived; }
+  // A session is "running" if its main loop is live OR it has a background
+  // task still working (isRunning goes false the moment the loop yields, but
+  // hasBackgroundActivity stays true while spawned agents/tasks run) — without
+  // the latter, a session waiting on a background task renders as idle.
+  function isRunning(s) { return (s.isRunning === true || s.hasBackgroundActivity === true) && !s.isArchived; }
   function titleOf(s) {
     return s.title ||
       (s.userSelectedFolders && s.userSelectedFolders.length
@@ -126,6 +131,12 @@
     if (/\?\s*$/.test(t)) return true;
     return QUESTION_OPENER_RE.test(t.slice(0, 60));
   }
+  // the "question" state means the LLM asked YOU something and is waiting — so
+  // it only counts when the last transcript message is the assistant's. A user
+  // message ending in "?" is the human asking, not a question for the human.
+  function assistantAsked(id) {
+    return transcriptRole[id] === "assistant" && looksLikeQuestion(transcriptCache[id]);
+  }
   // FRESH_MS: a session stays "fresh" (blue) for this long after entering
   // unread. AGING_MS is the fresh/aging boundary itself — there is no third
   // threshold, the name just documents which constant plays which role.
@@ -139,7 +150,7 @@
   function state(s, unread) {
     var id = sid(s);
     if (hasError(s)) return "error";       // most urgent: session is broken, needs action
-    if (unread[id] && !dismissed[id] && looksLikeQuestion(transcriptCache[id])) return "question";
+    if (unread[id] && !dismissed[id] && assistantAsked(id)) return "question";
     if (needsInput(s)) return "blocked";   // waiting on YOUR answer
     if (unread[id] && !dismissed[id]) {
       var ageSt = waitAgeState(id, unread);
@@ -214,16 +225,20 @@
     if (!bridge || typeof bridge.getTranscript !== "function") { cb(previewText(s)); return; }
     Promise.resolve(bridge.getTranscript(id)).then(function (tr) {
       var msgs = Array.isArray(tr) ? tr : (tr && (tr.messages || tr.items)) || [];
-      var last = lastMessageText(msgs);
-      transcriptCache[id] = last || s.initialMessage || "No recent activity.";
+      var last = lastMessage(msgs);
+      transcriptCache[id] = (last && last.text) || s.initialMessage || "No recent activity.";
+      transcriptRole[id] = last ? last.role : "";
       transcriptCacheAt[id] = activityAt;
       cb(transcriptCache[id]);
     }).catch(function () { cb(s.initialMessage || "No recent activity."); });
   }
   // transcript entries look like {message:{role, content:[{type:"text",text}, ...]}}
-  function lastMessageText(msgs) {
+  // returns {text, role} for the last entry that has renderable text, so callers
+  // can tell whether the assistant or the user spoke last.
+  function lastMessage(msgs) {
     for (var i = msgs.length - 1; i >= 0; i--) {
       var m = msgs[i];
+      var role = (m && (m.message ? m.message.role : m.role)) || "";
       var c = m && (m.message ? m.message.content : (m.content != null ? m.content : m.text));
       var txt = "";
       if (typeof c === "string") txt = c;
@@ -231,13 +246,34 @@
         txt = c.filter(function (p) { return p && p.type === "text" && p.text; })
                .map(function (p) { return p.text; }).join(" ");
       }
-      if (txt && txt.trim()) return txt.trim();
+      if (txt && txt.trim()) return { text: txt.trim(), role: role };
     }
     return null;
   }
 
   // ---- spy scan: diff every live store + storage key, ring-buffer changes
+  // Values can carry circular refs / non-serializable members (e.g. session
+  // objects from getAll()); JSON.stringify(spyBuf) in exportSpy would throw on
+  // them and the download would silently fail. Snapshot every pushed value to
+  // a plain JSON-safe structure — dropping cycles and functions — so the whole
+  // buffer is guaranteed exportable.
+  // Also caps bulk: session objects carry transcripts/summaries that balloon
+  // the ring buffer to tens of MB across a scan; truncate long strings so a
+  // capture stays a lightweight shape-and-value probe, not a full data dump.
+  function safeSnapshot(v) {
+    var seen = new Set();
+    return JSON.parse(JSON.stringify(v, function (k, val) {
+      if (typeof val === "function") return undefined;
+      if (typeof val === "string" && val.length > 200) return val.slice(0, 200) + "…[+" + (val.length - 200) + "]";
+      if (val && typeof val === "object") {
+        if (seen.has(val)) return "[Circular]";
+        seen.add(val);
+      }
+      return val;
+    }));
+  }
   function spyPush(source, key, value) {
+    try { value = safeSnapshot(value); } catch (e) { value = "[unserializable]"; }
     spyBuf.push({ t: Date.now(), source: source, key: key, value: value });
     if (spyBuf.length > SPY_CAP) spyBuf.splice(0, spyBuf.length - SPY_CAP);
   }
@@ -340,7 +376,7 @@
     sessions.forEach(function (s) {
       var id = sid(s);
       if (!unread[id] || dismissed[id] || hasError(s) || needsInput(s)) return;
-      if (!looksLikeQuestion(transcriptCache[id])) return;
+      if (!assistantAsked(id)) return;
       questionNow[id] = 1;
       if (!lastQuestion[id]) notify("Question for you", titleOf(s));
     });
@@ -696,7 +732,7 @@
     var byOldest = function (a, b) { return (durationFor(b, state(b, unread))) - (durationFor(a, state(a, unread))); };
     // priority: error > question > blocked > fresh > aging > running > pinned-idle
     var errored = sessions.filter(function (s) { return hasError(s); });
-    var question = sessions.filter(function (s) { return !hasError(s) && !needsInput(s) && unread[sid(s)] && !dismissed[sid(s)] && looksLikeQuestion(transcriptCache[sid(s)]); });
+    var question = sessions.filter(function (s) { return !hasError(s) && !needsInput(s) && unread[sid(s)] && !dismissed[sid(s)] && assistantAsked(sid(s)); });
     var blocked = sessions.filter(function (s) { return !hasError(s) && needsInput(s); });
     var fresh = sessions.filter(function (s) { var id = sid(s); return !hasError(s) && !needsInput(s) && !question.some(function (q) { return sid(q) === id; }) && waitAgeState(id, unread) === "fresh" && !dismissed[id]; });
     var aging = sessions.filter(function (s) { var id = sid(s); return !hasError(s) && !needsInput(s) && !question.some(function (q) { return sid(q) === id; }) && waitAgeState(id, unread) === "aging" && !dismissed[id]; });
@@ -904,6 +940,13 @@
                         : Promise.resolve([]);
     var chatsP = Promise.resolve(chatsFromCache());   // local read, no network
     return Promise.all([codeP, cwP, chatsP]).then(function (r) {
+      // spy: capture the raw session objects from getAll() — the fields the
+      // status logic reads live here, and nowhere in the getState()/localStorage
+      // sweep, so without this the export is blind to e.g. running-task state.
+      if (spyOn) {
+        spyPush("sessions", "LocalSessions.getAll", r[0]);
+        if (coworkApi) spyPush("sessions", "LocalAgentModeSessions.getAll", r[1]);
+      }
       kindById = {};
       var out = [];
       r[0].forEach(function (s) { if (!s.isArchived) { s._kind = "code"; kindById[sid(s)] = "code"; out.push(s); } });
