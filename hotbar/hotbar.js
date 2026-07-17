@@ -116,14 +116,43 @@
   }
   // session is blocked on a tool-permission prompt — needs your decision (app shows yellow)
   function needsInput(s) { return Array.isArray(s.pendingToolPermissions) && s.pendingToolPermissions.length > 0; }
-  // session hit a hard error (session.error/errorCategory, set by the app's own
-  // error-categorization — categories confirmed by reading the app's own bundle:
-  // api_billing_error, api_rate_limit, extra_usage_required, network_error,
-  // auth_error, api_overloaded, prompt_too_long, and others).
-  function hasError(s) { return typeof s.errorCategory === "string" && s.errorCategory.length > 0; }
-  var CREDIT_ERROR = { api_billing_error: 1, api_rate_limit: 1, extra_usage_required: 1 };
-  function isCreditError(s) { return !!CREDIT_ERROR[s.errorCategory]; }
-  function isNetworkError(s) { return s.errorCategory === "network_error"; }
+  // session hit a hard error. The app sets errorCategory for SOME failures
+  // (api_billing_error, api_rate_limit, extra_usage_required, network_error,
+  // auth_error, api_overloaded, prompt_too_long, ...) but for others — notably
+  // the usage-limit and 529-overloaded cases — it populates only s.error (a
+  // human string) + s.errorAt and leaves errorCategory empty. Detecting only
+  // errorCategory silently dropped those, so we key on BOTH.
+  // Guard against a stale s.error left over from a turn the user already
+  // retried successfully: a bare error string counts only while errorAt is the
+  // most recent thing that happened (errorAt >= lastActivityAt). errorCategory,
+  // when the app sets it, is trusted on its own.
+  function hasErrorCategory(s) { return typeof s.errorCategory === "string" && s.errorCategory.length > 0; }
+  function hasErrorString(s) {
+    if (typeof s.error !== "string" || !s.error) return false;
+    var at = tnum(s.errorAt), la = tnum(s.lastActivityAt);
+    return at == null || la == null || at >= la;   // fresh error, not one already retried past
+  }
+  function hasError(s) { return hasErrorCategory(s) || hasErrorString(s); }
+  // Coarse category, derived from errorCategory when the app set it, otherwise
+  // from the error string — so the row picks the right label/action even when
+  // no category was provided. Order matters: billing, then usage-limit, then
+  // overload, then network.
+  var CREDIT_ERROR = { api_billing_error: 1, extra_usage_required: 1 };
+  var LIMIT_ERROR = { api_rate_limit: 1 };
+  function errText(s) { return String(s.error || ""); }
+  function isCreditError(s) {
+    return !!CREDIT_ERROR[s.errorCategory] || /credit balance|buy[_ ]credits|billing/i.test(errText(s));
+  }
+  function isLimitError(s) {
+    return !!LIMIT_ERROR[s.errorCategory] || /usage limit|rate.?limit|limit reached|limit (?:will )?reset/i.test(errText(s));
+  }
+  function isOverloadError(s) {
+    return s.errorCategory === "api_overloaded" || /overloaded|\b529\b|service is busy/i.test(errText(s));
+  }
+  function isNetworkError(s) {
+    return s.errorCategory === "network_error" ||
+      /network error|connection (?:lost|error)|failed to fetch|econnrefused|etimedout/i.test(errText(s));
+  }
   // heuristic: does the last known message read like it's asking the user
   // something? Ends-with-"?" is the primary signal; a small set of common
   // phrase-openers (checked against just the first 60 chars) catches
@@ -642,13 +671,17 @@
   // an "Upgrade credits" action — no point counting how long you've been stuck.
   function errorLabel(s) {
     if (isCreditError(s)) return "Upgrade credits";
+    if (isLimitError(s)) return "Usage limit";
+    if (isOverloadError(s)) return "Service busy";
     if (isNetworkError(s)) return "Connection lost";
     return String(s.errorCategory || "error").replace(/_/g, " ");
   }
   function subFor(s, st) {
     if (st === "error") {
       var lbl = errorLabel(s);
-      return isCreditError(s) ? lbl : lbl + " · " + fmtDur(durationFor(s, st));
+      // credit + usage-limit are act/wait states where a duration is noise;
+      // overload/network/other keep the "how long stuck" counter.
+      return (isCreditError(s) || isLimitError(s)) ? lbl : lbl + " · " + fmtDur(durationFor(s, st));
     }
     return (STATE_LABEL[st] || st) + " · " + fmtDur(durationFor(s, st));
   }
@@ -1021,8 +1054,18 @@
     //   window.__claudeHotbar.injectFake([{sessionId:"fake1", title:"TEST: out of credits",
     //     isRunning:false, isArchived:false, lastActivityAt:Date.now()-60000,
     //     errorCategory:"api_billing_error", error:"Credit balance is too low"}])
-    // Categories: api_billing_error / api_rate_limit / extra_usage_required -> "Upgrade credits"
+    // Categories: api_billing_error / extra_usage_required -> "Upgrade credits";
+    //             api_rate_limit or /usage limit/-style text -> "Usage limit";
+    //             api_overloaded or 529/overloaded text -> "Service busy";
     //             network_error -> "Connection lost"; anything else -> humanized label.
+    // The app often reports usage-limit and 529 errors via s.error/s.errorAt
+    // ONLY (no errorCategory), so test that path too — set error + errorAt and
+    // leave errorCategory unset; the row still promotes as long as
+    // errorAt >= lastActivityAt (a bare error string older than the last
+    // activity is treated as already-retried and is NOT shown):
+    //   window.__claudeHotbar.injectFake([{sessionId:"fake2", title:"TEST: overloaded",
+    //     isRunning:false, isArchived:false, lastActivityAt:Date.now()-60000,
+    //     error:"API Error: 529 Overloaded", errorAt:Date.now()-60000}])
     // ttlMs auto-clears the fake data (default 5min) so forgetting to call
     // clearFake() doesn't leave a static test row sitting there forever,
     // which looks exactly like the bar has frozen and stopped tracking.

@@ -309,7 +309,16 @@ Top-of-window strip. See `docs/mockups/` for the per-element visual spec:
 
 **Attention states, shape+color** (status-indicator's full ramp):
 - `error` — dark saturated red (`#A32D2D`), alert-triangle icon. Reserved
-  exclusively for `hasError(s)`; never reassigned.
+  exclusively for `hasError(s)`; never reassigned. `hasError` fires on either
+  a non-empty `errorCategory` OR a non-empty `error` string — the app populates
+  usage-limit and 529-overloaded failures via `error`/`errorAt` only, leaving
+  `errorCategory` empty, so keying on the category alone silently dropped them.
+  A bare `error` string counts only while `errorAt >= lastActivityAt`, so an
+  error the user has already retried past (later activity) is not shown as live.
+  Category (from `errorCategory`, else derived from the `error` string) drives
+  the label/action: billing → `Upgrade credits` (opens billing, no duration);
+  usage-limit → `Usage limit` (no duration); overloaded → `Service busy · <dur>`;
+  network → `Connection lost · <dur>`; else humanized category · duration.
 - `question` — red (`#e24b4a`), alert-triangle icon (same glyph as `error`,
   distinguished by the darker/more-saturated error color and its own
   `.question` class). The last known message reads like it's asking the
