@@ -335,6 +335,7 @@
 
   // ---- multi-instance discovery + MutationObserver fallback --------------
   var observer = null;
+  var scanTimer = null;   // coalesces the body-subtree mutation storm into one scan
 
   function scanAndInstall() {
     var nodes = document.querySelectorAll(COMPOSER_SELECTOR);
@@ -349,7 +350,14 @@
 
   function startObserver() {
     try {
-      observer = new MutationObserver(function () { scanAndInstall(); });
+      // The app mutates document.body constantly (message list grows every
+      // streamed token, animations, etc). Running scanAndInstall() — a full
+      // document.querySelectorAll — on every mutation pegs the renderer.
+      // Composers mount rarely, so a coalesced ~400ms scan is more than enough.
+      observer = new MutationObserver(function () {
+        if (scanTimer) return;
+        scanTimer = setTimeout(function () { scanTimer = null; scanAndInstall(); }, 400);
+      });
       observer.observe(document.body, { childList: true, subtree: true });
     } catch (e) {
       console.warn("[chat-input-extension] MutationObserver could not be started; composers mounted later will not be picked up automatically.", e);
@@ -385,6 +393,7 @@
       instances = [];
       try { if (observer) observer.disconnect(); } catch (e) {}
       observer = null;
+      if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
       try { if (style && style.parentNode) style.parentNode.removeChild(style); } catch (e) {}
       delete window.__chatInputExtension;
     },

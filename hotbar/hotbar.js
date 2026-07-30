@@ -70,6 +70,7 @@
   var pos = loadJSON("hotbar-pos", null);   // {left, top} once dragged
   var panelScroll = 0;                       // preserved panel scroll across re-renders
   var onDocDown = null;                      // outside-click-to-close handler
+  var evTimer = null;                        // coalesces bursty onEvent fires into one tick
   var interacting = false;                   // true from mousedown through just after the click
   var HOVER_DELAY_MS = 1000;
 
@@ -1032,8 +1033,15 @@
     document.addEventListener("mousedown", onDocDown, true);
     if (window.Notification && Notification.permission === "default") Notification.requestPermission();
     try {
+      // onEvent can fire per streamed token — hundreds/sec while a session runs.
+      // Coalesce into at most one tick per ~300ms so we don't rebuild the DOM
+      // (render() does root.innerHTML = "") on every event and peg the renderer.
+      var scheduleTick = function () {
+        if (evTimer) return;
+        evTimer = setTimeout(function () { evTimer = null; tick(); }, 300);
+      };
       var sub = api.onOnEvent || api.onEvent;
-      if (typeof sub === "function") unsub = sub.call(api, function () { tick(); });
+      if (typeof sub === "function") unsub = sub.call(api, scheduleTick);
     } catch (e) {}
     timer = setInterval(tick, POLL_MS);
     tick();
@@ -1042,6 +1050,7 @@
   window.__claudeHotbar = {
     destroy: function () {
       if (timer) clearInterval(timer);
+      if (evTimer) { clearTimeout(evTimer); evTimer = null; }
       try { if (typeof unsub === "function") unsub(); } catch (e) {}
       try { if (onDocDown) document.removeEventListener("mousedown", onDocDown, true); } catch (e) {}
       hidePreview();
